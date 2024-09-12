@@ -74,7 +74,7 @@ header {
     left: 0;
     width: 100%;
     height: 100%;
-    background-image: url('images/background.jpeg'); /* Path to your background image */
+    background-image: url('../images/background.jpeg'); /* Path to your background image */
     background-size: cover;
     background-position: center;
     background-repeat: no-repeat;
