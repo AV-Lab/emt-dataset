@@ -99,7 +99,7 @@ header {
     position: relative;
     z-index: 2; /* Ensure content is above the background and overlay */
     max-width: 1200px; /* Set a max width for readability */
-    margin: 300px auto; /* Center content horizontally */
+    margin: 400px auto; /* Center content horizontally */
     padding: 40px;
     text-align: center; /* Center text horizontally */
     color: white; /* Make the text white for better contrast */
