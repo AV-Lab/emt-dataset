@@ -1,0 +1,33 @@
+site_name: ROAD-UAE
+theme:
+  name: material
+  palette:
+    primary: 'black'
+    accent: 'deep orange'
+  features:
+    - navigation.tabs
+    - toc.integrate   # Integrates the Table of Contents into the sidebar
+  font:
+    text: "Open Sans"
+  custom_dir: docs/theme
+
+nav:
+  - ROAD-UAE: index.md
+  - Download Dataset: dataset.md
+
+extra_css:
+  - stylesheets/custom.css  # Custom CSS for background and layout
+
+extra_javascript:
+  - javascripts/custom.js    # Optional for JavaScript-based customizations
+
+# Plugins
+plugins:
+  - search
+
+markdown_extensions:
+  - tables
+  - admonition
+
+
+baseurl: "/road-uae.github.io"

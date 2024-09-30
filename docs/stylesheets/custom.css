@@ -1,0 +1,212 @@
+/* Custom background colors */
+body {
+    background-color: #f0f0f0; /* Light gray background for the whole site */
+    height: 100%; /* Ensure body takes full height */
+    margin: 0;
+    padding: 0;
+}
+
+header {
+    background-size: cover;
+    color: white;
+    height: 300px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.columns {
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    margin-top: 30px;
+}
+
+.column {
+    flex: 1;
+    padding: 20px;
+    border-radius: 8px;
+}
+
+.table-section {
+    margin-top: 40px;
+    background-color: #fff3e0; /* Light orange background for the table section */
+    padding: 20px;
+    border-radius: 8px;
+}
+
+/* Hide the sidebar completely */
+.md-sidebar--primary {
+    display: none;
+}
+
+/* Adjust the main content width to take full screen */
+.md-content {
+    margin-left: 0;  /* Removes the space reserved for the sidebar */
+    width: 100%;     /* Makes the content full width */
+}
+
+/* Restore the default visibility of the right sidebar if hidden */
+.md-sidebar--secondary {
+    display: block !important; /* Ensure it's visible */
+}
+
+.md-typeset h1 {
+    display: none;
+}
+
+/* Full-width, full-height background image */
+/* Full-width, full-height background image */
+.main {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100vh; /* Full viewport height */
+    z-index: -1; /* Place behind the content */
+}
+
+/* Background image with blur */
+.main::before {
+    content: "";
+    position: fixed; /* Keep the background fixed */
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('/images/background.jpeg'); /* Path to your background image */
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    filter: blur(7px); /* Apply blur only to the background image */
+    z-index: -1; /* Behind the content */
+}
+
+/* Black transparent overlay over the background image */
+.main::after {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7); /* 70% transparent black */
+    z-index: 0; /* Ensure it appears over the background image but under the content */
+}
+
+/* Content wrapper: Ensure it's centered */
+.main-content {
+    position: relative;
+    z-index: 2; /* Ensure content is above the background and overlay */
+    max-width: 1200px; /* Set a max width for readability */
+    margin: 200px auto; /* Center content horizontally */
+    padding: 40px;
+    text-align: center; /* Center text horizontally */
+    color: white; /* Make the text white for better contrast */
+    display: block;
+    flex-direction: column;
+    justify-content: center; /* Vertically center the content */
+    height: 100%; /* Ensure content fills the height */
+    filter: none; /* No blur on the content */
+}
+
+/* Remove background and adjust styles for features */
+.feature, .features-section, .stats-column {
+    background: none; /* Remove background color */
+    box-shadow: none; /* Remove box shadow */
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+/* Remove extra space after the footer */
+.footer {
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+
+/* Features Section */
+.features-section {
+    padding: 60px 0;
+    background-size: cover;
+    color: white;
+    text-align: center;
+}
+
+.features-header h2 {
+    font-size: 36px;
+    font-weight: bold;
+    color: white;
+}
+
+/* 6 Columns for Features */
+.features-columns {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.feature {
+    flex: 1 1 calc(33.333% - 40px); /* Create 3 columns in one row */
+    padding: 20px;
+    border-radius: 8px;
+    margin: 10px 0;
+}
+
+.feature h3 {
+    font-size: 24px;
+    color: #17da52; /* Matching PIE theme color */
+}
+
+.feature p {
+    font-size: 16px;
+    line-height: 1.6;
+}
+
+/* Stats Section */
+.stats-header {
+    margin-top: 40px;
+}
+
+.stats-header h2 {
+    font-size: 36px;
+    font-weight: bold;
+    color: white;
+}
+
+/* Stats Column */
+.stats-column {
+    padding: 30px;
+    border-radius: 8px;
+    max-width: 600px;
+    margin: 0 auto;
+    text-align: left;
+}
+
+.stats-column p, .stats-column ul {
+    font-size: 18px;
+    line-height: 1.6;
+    color: #fff;
+}
+
+.stats-column ul {
+    list-style-type: none;
+    padding: 0;
+}
+
+.stats-column li {
+    margin: 5px 0;
+}
+
+/* Ensure proper spacing and padding for body */
+html, body {
+    height: 100%; /* Ensure full height of the body */
+    margin: 0;
+    padding: 0;
+}
+
+.md-footer {
+    display: none
+}
