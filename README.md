@@ -65,7 +65,7 @@ emt/
 - **📦 Download**: [Dropbox Link](https://www.dropbox.com/scl/fo/7f6ww69yzf6ezyj4p9wcp/APUqsrDTct9eoyl0kOvLL8s?rlkey=pvqc2c6vgpzgxjb24x4c3lypy&st=osz5j0ou&dl=0)
 
 ## 🚀 Usage Guide
-
+Annotations are available for every third frame to optimize the balance between annotation density and processing efficiency
 ### 🔄 Format Conversion
 To convert annotations to KITTI or GMOT format:
 ```bash
@@ -80,7 +80,7 @@ python kitti_gmot.py
 ### 📊 Computing Dataset Statistics
 To compute basic statistics about the dataset:
 ```bash
-python dataset_statistics.py annot_dir
+python stats.py annot_dir
 ```
 
 This script calculates:
@@ -91,19 +91,30 @@ This script calculates:
 
 Example usage:
 ```bash
-python dataset_statistics.py path/to/annotations/
+python stats.py emt/kitti_annotations/
 ```
 
 Sample output:
 ```
-Total number of bounding box annotations:  626634
-Total number of unique agents:  9094
-Total number of vehicles:  7857
-Total number of pedestrians:  568
+Processing annotation files: ['video_204647.txt', 'video_214547.txt', 'video_142911.txt', 'video_143739.txt', 'video_122233.txt', 'video_204347.txt', 'video_151901.txt', 'video_210906.txt', 'video_115533.txt', 'video_160325.txt', 'video_131333.txt', 'video_054907.txt', 'video_174340.txt', 'video_155425.txt', 'video_054604.txt', 'video_160902-161205.txt', 'video_115833.txt', 'video_125233.txt', 'video_220047.txt', 'video_141432-141733.txt']
+
+-------------------------
+Total number of bounding box annotations: 576416
+Total number of people (pedestrians and Cyclists): 582
+Total number of vehicles: 8234
+Total number of unique agents: 8816
+
+-------------------------
+Detailed Statistics:
+Number of AV agents: 7
+Number of unclassified objects: 3
+Number of annotation files processed: 20
+
 ```
 
 [Rest of Usage Guide sections remain the same]
 
+### 📊 Visualization
 #### 1. 🖼️ Frame-by-Frame Visualization
 ```bash
 python plot_annotations.py frames_dir annotations_dir
@@ -131,11 +142,28 @@ python visualize.py --video_path path/to/video.mp4 --annotation_path path/to/ann
 # Save visualization
 python visualize.py --video_path path/to/video.mp4 -save
 ```
-
 **📝 Notes:**
 - `-save` flag creates output in `emt/annotated_videos/`
 - Default annotation path: `emt/kitti_annotations/<video_name>.txt`
-- Annotations are available for every third frame to optimize the balance between annotation density and processing efficiency
+
+
+### 📊 Frame extraction and Coco Format
+
+To extract framesfrom kitti_format annotation use the following:
+```bash
+python coco.py annot_dir
+```
+
+This script:
+- Extracts annotated frames from kitti_format
+- creates coco format annotations
+- takes as input the whole dataset where the videos are under raw folder and anotations are under kitti_annotation folder
+
+Example usage:
+```bash
+python coco.py emt/
+```
+
 
 ## 📧 Contact
 - 👩‍💻 Nadya: 100049370@ku.ac.ae

@@ -24,10 +24,23 @@ if __name__ == '__main__':
     
     bounding_box_count = 0
     unique_agents_vehicles = set()
-    unique_agents_pedestrians = set()
+    unique_agents_people = set()
     unique_agents_rest = set()
-    vehicles = set(['Car', 'Large_vehicle', 'Medium_vehicle'])
-    
+    # vehicles = set(['Car', 
+    #                 'Large_vehicle', 
+    #                 'Medium_vehicle',
+    #                 'Motorbike',
+    #                 'Bus',
+    #                 'Emergency_vehicle',
+    #                 'Small_motorised_vehicle'])
+    vehicles =set([        
+        'Car', 
+        'Large_vehicle', 
+        'Medium_vehicle',
+        'Motorbike',
+        'Bus',
+        'Emergency_vehicle',
+        'Small_motorised_vehicle'])
     for ann in annotations:
         ann_dir = os.path.join(args.annot_dir, ann) 
         annotation_files = os.listdir(ann_dir)
@@ -39,24 +52,33 @@ if __name__ == '__main__':
                 for inst in data[0]['instances']:
                     trackId = inst['trackId']
                     
-                    if len(inst['classValues']) != 3:
-                        continue
+                    # if len(inst['classValues']) != 3:
+                    #     continue
+                    object_type = next(
+                        (attr["value"] for attr in inst["classValues"] if attr["name"] == "Agent"), "Unknown"
+                    )
+
+                    if object_type == "Emergency vehicle":
+                        # print("object_type: %s" % object_type)
+                        # print("Emergency Vehicle Fix")
+                        object_type = "Emergency_vehicle"
                     
-                    bounding_box_count += 1
-                    if inst['classValues'][0]['value'] == 'Pedestrian':
-                        unique_agents_pedestrians.add(trackId)
-                    elif inst['classValues'][0]['value'] in vehicles:
+                    if object_type == 'Pedestrian' or object_type == 'Cyclist' :
+                        unique_agents_people.add(trackId)
+                        bounding_box_count += 1
+                    elif object_type in vehicles:
                         unique_agents_vehicles.add(trackId)
+                        bounding_box_count += 1
                     else:
                         unique_agents_rest.add(trackId)
                         
-    pd = len(unique_agents_pedestrians)  
+    pd = len(unique_agents_people)  
     vh = len(unique_agents_vehicles)                  
 
     print('Total number of bounding box annotations: ', bounding_box_count)
-    print('Total number of unique agents: ', len(unique_agents_rest) + pd + vh)
+    print('Total number of people (pedestrians and Cylicsts): ', pd)
     print('Total number of vehicles: ', vh)
-    print('Total number of pedestrians: ', pd)
+    print('Total number of unique agents: ', pd + vh)
         
         
     
