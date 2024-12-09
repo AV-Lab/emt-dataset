@@ -1,41 +1,43 @@
-# EMT dataset 
-## Introduction
-ROAD-UAE is a richly annotated dataset containing detailed semantic annotations for road agents and events. With 57 minutes of continuous footage, each video segment lasts between 2.5 to 3 minutes. The dataset includes heterogeneous annotations for three main agent categories: people (pedestrians and cyclists), vehicles (divided into seven classes), and traffic lights.
+# 🛣️ EMT Dataset 
+
+## 📑 Table of Contents
+- [Introduction](#introduction)
+- [Dataset Features](#dataset-features)
+- [Dataset Structure](#dataset-structure)
+- [Dataset Access](#dataset-access)
+- [Usage Guide](#usage-guide)
+- [Contact](#contact)
+
+## 🎯 Introduction
+EMT is a richly annotated dataset containing detailed semantic annotations for road agents and events. With 57 minutes of continuous footage, each video segment lasts between 2.5 to 3 minutes. The dataset includes heterogeneous annotations for three main agent categories: people (pedestrians and cyclists), vehicles (divided into seven classes), and traffic lights.
 
 It captures the unique road topology and traffic conditions of the Gulf Region, offering consistent tracking IDs for all road agents. Additionally, it provides action annotations as "action tubes" and road event detections labeled as triplets (Agent, Action, Location) at the frame level.
 
+## 📊 Dataset Features
 
-## 📊 EMT Dataset Features
-
-### Data Collection
+### 📹 Data Collection
 | Aspect | Description |
 |:-------|:------------|
 | Duration | 57 minutes total footage |
 | Segments | 2.5-3 minutes continuous recordings |
 | Format | 1920x1080, 30fps |
 | Storage | Uncompressed raw data |
-### Annotation Types
-1. **👥 Agent Categories**   
-Two people classes and seven vehicle classes.
-    - 👤 People  
-        * Pedestrians
-        * Cyclists
-    - 🚗 Vehicles 
-        * Motorbike
-        * Small motorised vehicle
-        * Medium vehicle
-        * Large vehicle
-        * Car
-        * Bus
-        * Emergency vehicle   
 
-2. **🎯 Tracking System**  
-    - Bounding box annotations
-    - Consistent tracking IDs
+### 🎯 Agent Categories
+1. **👥 People**   
+   - 🚶 Pedestrians
+   - 🚴 Cyclists
 
+2. **🚗 Vehicles**
+   - 🏍️ Motorbike
+   - 🚗 Small motorised vehicle
+   - 🚐 Medium vehicle
+   - 🚛 Large vehicle
+   - 🚙 Car
+   - 🚌 Bus
+   - 🚑 Emergency vehicle
 
-
-### Stattistics 
+### 📈 Statistics 
 | Category | Count |
 |:---------|:--------|
 | Annotated Frames | 34,386 | 
@@ -44,67 +46,67 @@ Two people classes and seven vehicle classes.
 | Vehicle Instances | 3,729 |
 | Pedestrian Instances | 222 | 
 
-
-### Dataset Structure 
+## 📁 Dataset Structure 
 ```
 emt/
-├── raw/
-│   ├── videos/
-└── annotations/
-|   ├── video_annotations/
-├── kitti_annotations/
-│   ├── video_annotations/
-├── gmot_annotations/
-│   ├── video_annotations/
-```
-# Quick Start Guide
-
-## Plotting Frame Annotations
-To generate annotated visualizations from the frames, run:
-```bash
-python plot_annotations.py frames_dir annotations_dir
+├── raw/                    # Raw video files
+│   └── videos/
+├── annotations/            # Original annotations
+│   └── video_annotations/
+├── kitti_annotations/      # KITTI format annotations
+│   └── video_annotations/
+└── gmot_annotations/       # GMOT format annotations
+    └── video_annotations/
 ```
 
-The script provides two visualization options:
-1. Plots all annotations on frames with bounding boxes and labels
-2. Generates separate videos for each tracked agent (uncomment `plot_each_agent` in the script)
+## 🔗 Dataset Access
+- **💻 Repository**: [GitHub - AV-Lab/road-uae](https://github.com/AV-Lab/road-uae)
+- **🌐 Website**: [EMT Dataset](https://avlab.io/emt-dataset/)
+- **📦 Download**: [Dropbox Link](https://www.dropbox.com/scl/fo/7f6ww69yzf6ezyj4p9wcp/APUqsrDTct9eoyl0kOvLL8s?rlkey=pvqc2c6vgpzgxjb24x4c3lypy&st=osz5j0ou&dl=0)
 
-### Output
-- Creates an `output` directory inside your annotations directory
-- Saves annotated video as `annotated_video.mp4`
-- Saves individual annotated frames in `frames` subdirectory
-- When using `plot_each_agent`, saves individual videos for each tracked object
+## 🚀 Usage Guide
 
-### Visualization Format
-- Bounding boxes are drawn around detected objects
-- Labels show (agent, action, landmark) for each object
-- Frame-by-frame visualization is saved both as images and video
-
-## Visualizing Video Annotations
-To visualize annotations overlaid on the raw video, use one of the following commands:
-
-```bash
-# Basic visualization with default annotation path
-python visualize.py --video_path path/to/video.mp4
-
-# Specify custom annotation path
-python visualize.py --video_path path/to/video.mp4 --annotation_path path/to/annotations.txt
-
-# Save the annotated video
-python visualize.py --video_path path/to/video.mp4 -save
-```
-
-The `-save` flag is optional:
-- With `-save`: Creates an annotated video file in `emt/annotated_videos/`
-- Without `-save`: Displays the visualization without saving
-
-By default, the script looks for annotation files in `emt/kitti_annotations/` with the same name as the video file.
-
-## Kitti and Gmot annotations
-To generate kitti or gmot formatted annotations from the original annotations; use the following command:
+### 🔄 Format Conversion
+To convert annotations to KITTI or GMOT format:
 ```bash
 python kitti_gmot.py
 ```
 
-## Important Note
-The annotation data is available for every third frame in the video sequence. This sampling rate was chosen to balance annotation density with processing efficiency.
+### 📊 Data Visualization
+
+#### 1. 🖼️ Frame-by-Frame Visualization
+```bash
+python plot_annotations.py frames_dir annotations_dir
+```
+
+This script offers two visualization modes:
+- 🎥 All annotations: Creates a video with bounding boxes and labels for all objects
+- 🎯 Individual tracking: Generates separate videos for each tracked agent
+
+**📂 Output:**
+- Creates `output` directory inside annotations folder
+- Generates:
+  - 📼 `annotated_video.mp4`: Complete visualization
+  - 📁 `frames/`: Individual annotated frames
+  - 🎥 Individual agent videos (when using `plot_each_agent`)
+
+#### 2. 🎥 Video Annotation Visualization
+```bash
+# Basic visualization
+python visualize.py --video_path path/to/video.mp4
+
+# Custom annotation path
+python visualize.py --video_path path/to/video.mp4 --annotation_path path/to/annotations.txt
+
+# Save visualization
+python visualize.py --video_path path/to/video.mp4 -save
+```
+
+**📝 Notes:**
+- `-save` flag creates output in `emt/annotated_videos/`
+- Default annotation path: `emt/kitti_annotations/<video_name>.txt`
+- Annotations are available for every third frame to optimize the balance between annotation density and processing efficiency
+
+## 📧 Contact
+- 👩‍💻 Nadya: 100049370@ku.ac.ae
+- 👨‍💻 Murad: murad.mebrahtu@ku.ac.ae
