@@ -28,14 +28,14 @@ def draw_bounding_boxes(image, annotations, frame_idx):
         cv2.rectangle(image, (bbox_left, bbox_top), (bbox_right, bbox_bottom), color, 2)
 
         # Add label (object type and track ID)
-        label = f"{obj_type} ({track_id})"
+        label = f"{obj_type} " #({track_id})
         cv2.putText(image, label, (bbox_left, bbox_top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
     return image
-
 def process_video(video_path, annotation_path, save_output=False, output_video_path="output_video.mp4"):
     """
     Process a video to overlay KITTI annotations, visualize, and optionally save the result.
+    Annotations start from second frame and repeat every third frame.
     """
     # Read annotations from file
     with open(annotation_path, 'r') as f:
@@ -57,47 +57,51 @@ def process_video(video_path, annotation_path, save_output=False, output_video_p
         writer = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
     
     frame_idx = 0
-    # Get the video FPS
-    fps = cap.get(cv2.CAP_PROP_FPS)
+    last_annotation_frame = None
+    
     while True:
         ret, frame = cap.read()
         if not ret:
             print("End of video!")
-            break  # End of video
+            break
 
-        # Draw bounding boxes for the current frame
-        if frame_idx %3 ==1:
-           
-            annotated_frame = draw_bounding_boxes(frame, annotations, frame_idx//3)
+        # Only get new annotations on frames that should be annotated (1, 4, 7, etc.)
+        if frame_idx % 3 == 1:
+            annotation_idx = frame_idx // 3 + 1
+            current_frame_annotations = [ann for ann in annotations if int(ann[0]) == annotation_idx]
+            if current_frame_annotations:
+                last_annotation_frame = current_frame_annotations
+        
+        # Use the last valid annotations for visualization
+        if last_annotation_frame:
+            annotated_frame = draw_bounding_boxes(frame, last_annotation_frame, frame_idx // 3 + 1)
         else:
             annotated_frame = frame
 
+        # Save frame if requested
+        if save_output and writer:
+            writer.write(annotated_frame)
+
+        # Display frame
         cv2.namedWindow("Frame", cv2.WINDOW_NORMAL)
         cv2.imshow("Frame", annotated_frame)
-        cv2.resizeWindow("Frame", 1280, 720)  
-        frame_idx += 1
-        # cv2.resizeWindow("Annotated", 640, 1440)
+        cv2.resizeWindow("Frame", 1280, 720)
 
-        # Debug print to track frame progress
-        print(f"Displaying frame {frame_idx}")
-        wait_time = int(1)  # wait time in milliseconds
-     
-        # WaitKey for 1 ms (adjust if needed)
         if cv2.waitKey(10) & 0xFF == ord('q'):
             print("Exiting visualization.")
             break
 
-        # Increment frame index
-        
+        frame_idx += 1
 
     # Release resources
     cap.release()
+    if writer:
+        writer.release()
     cv2.destroyAllWindows()
-
 def main():
     # Set up argument parser
     p = argparse.ArgumentParser(description='Visualize and optionally save annotated video')
-    p.add_argument('video_path', type=str, help='Path to the input video file')
+    p.add_argument('--video_path', type=str, required=True, help='Path to the input video file')
     p.add_argument('--annotation_path', type=str, help='Path to the annotation file. If not provided, will be inferred from video path')
     p.add_argument('-save', action='store_true', help='Flag to save the annotated video')
     

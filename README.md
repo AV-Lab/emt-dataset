@@ -41,10 +41,10 @@ It captures the unique road topology and traffic conditions of the Gulf Region, 
 | Category | Count |
 |:---------|:--------|
 | Annotated Frames | 34,386 | 
-| Bounding Boxes | 277,150 |
-| Unique Agents | 4,209 | 
-| Vehicle Instances | 3,729 |
-| Pedestrian Instances | 222 | 
+| Bounding Boxes | 626,634 |
+| Unique Agents | 9,094 | 
+| Vehicle Instances | 7,857 |
+| Pedestrian Instances | 568 | 
 
 ## 📁 Dataset Structure 
 ```
@@ -73,6 +73,36 @@ python kitti_gmot.py
 ```
 
 ### 📊 Data Visualization
+[Previous sections remain the same until before Usage Guide]
+
+## 🚀 Usage Guide
+
+### 📊 Computing Dataset Statistics
+To compute basic statistics about the dataset:
+```bash
+python dataset_statistics.py annot_dir
+```
+
+This script calculates:
+- Total number of bounding box annotations
+- Total number of unique agents
+- Total number of vehicles
+- Total number of pedestrians
+
+Example usage:
+```bash
+python dataset_statistics.py path/to/annotations/
+```
+
+Sample output:
+```
+Total number of bounding box annotations:  626634
+Total number of unique agents:  9094
+Total number of vehicles:  7857
+Total number of pedestrians:  568
+```
+
+[Rest of Usage Guide sections remain the same]
 
 #### 1. 🖼️ Frame-by-Frame Visualization
 ```bash
