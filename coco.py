@@ -12,9 +12,34 @@ import cv2
 import argparse
 from tqdm import tqdm
 
+# def extract_frames(vidname, videos_dir, outdir):
+#     """Extract frames using ffmpeg, starting from second frame"""
+#     base_name = vidname.split('.')[0]  # Remove any extension (.mp4 or .MP4)
+#     video_file = os.path.join(videos_dir, vidname)
+#     images_dir = os.path.join(outdir, base_name)
+#     print(f"--------------------------------{images_dir}--------------------------------")
+    
+#     if not os.path.isdir(images_dir):
+#         os.makedirs(images_dir)
+
+#     imglist = os.listdir(images_dir)
+#     imglist = [img for img in imglist if img.endswith('.jpg')]
+
+#     # if len(imglist) < 2:  # very few or no frames try extracting again
+#     # Extract every third frame starting from frame 1 (second frame)
+#     command = 'ffmpeg -i {} -vf "select=not(mod(n-1\,3))" -vsync vfr -q:v 1 {}/%05d.jpg'.format(
+#         video_file, images_dir)
+#     print('run', command)
+#     os.system(command)
+    
+#     imglist = os.listdir(images_dir)
+#     imglist = [img for img in imglist if img.endswith('.jpg')]
+    
+#     return len(imglist)
+
 def extract_frames(vidname, videos_dir, outdir):
-    """Extract frames using ffmpeg, starting from second frame"""
-    base_name = vidname.split('.')[0]  # Remove any extension (.mp4 or .MP4)
+    """Extract frames using cv2, starting from second frame"""
+    base_name = vidname.split('.')[0]
     video_file = os.path.join(videos_dir, vidname)
     images_dir = os.path.join(outdir, base_name)
     print(f"--------------------------------{images_dir}--------------------------------")
@@ -22,21 +47,40 @@ def extract_frames(vidname, videos_dir, outdir):
     if not os.path.isdir(images_dir):
         os.makedirs(images_dir)
 
-    imglist = os.listdir(images_dir)
-    imglist = [img for img in imglist if img.endswith('.jpg')]
+    # Open video
+    cap = cv2.VideoCapture(video_file)
+    if not cap.isOpened():
+        print(f"Error: Could not open video {video_file}")
+        return 0
 
-    # if len(imglist) < 2:  # very few or no frames try extracting again
-    # Extract every third frame starting from frame 1 (second frame)
-    command = 'ffmpeg -i {} -vf "select=not(mod(n-1\,3))" -vsync vfr -q:v 1 {}/%05d.jpg'.format(
-        video_file, images_dir)
-    print('run', command)
-    os.system(command)
+    # Get video properties
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    print(f"Total frames in video: {total_frames}")
+
+    frame_idx = 0  # Current frame index
+    save_idx = 1   # Index for saved frames (1-based)
     
-    imglist = os.listdir(images_dir)
-    imglist = [img for img in imglist if img.endswith('.jpg')]
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+            
+        # Start from second frame and take every third frame
+        if frame_idx % 3 == 1:  # This will get frames 1, 4, 7, etc.
+            frame_path = os.path.join(images_dir, f"{save_idx:05d}.jpg")
+            cv2.imwrite(frame_path, frame)
+            save_idx += 1
+            
+        frame_idx += 1
+    
+    cap.release()
+    
+    # Verify extracted frames
+    imglist = [f for f in os.listdir(images_dir) if f.endswith('.jpg')]
+    expected_frames = (total_frames - 2) // 3 + 1  # Starting from second frame, every third
+    print(f"Expected frames: {expected_frames}, Extracted frames: {len(imglist)}")
     
     return len(imglist)
-
 class EMTVideoToCOCO:
     def __init__(self, base_dir, splits=['training']):
         self.base_dir = base_dir

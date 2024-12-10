@@ -143,10 +143,9 @@ def kitti_annoatation(video_files,folder_path,kitti_folder):
                     )
 
                     
-                    if object_type == "Vehicle_traffic_light" or object_type == "Other_traffic_light": # remove traffic lights
-                        # print("Removing traffic lights")
+                    if object_type == "Vehicle_traffic_light" or object_type == "Other_traffic_light" or  object_type =="Unknown" or  object_type =="AV": # remove traffic lights,unknown objects and AV 
+                        # print(f"Removing {object_type}")
                         continue
-                    
                     if object_type=="Emergency vehicle":
                         # print("object_type: %s" % object_type)
                         # print("Emergency Vehicle Fix")
