@@ -6,14 +6,6 @@ Created on Sat Sep 28 18:08:42 2024
 @author: nadya
 """
 
-
-import json, pdb, argparse
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import matplotlib.cm as cmx
-import matplotlib.colors as colors
-from PIL import Image
-import numpy as np
 import os
 import cv2
 import sys
@@ -59,6 +51,7 @@ def plot_annotations(video_path, annotations_path, output_video_path=None):
     frame_idx = 0
     ann_idx = 0
     keep_frames = compute_frames_idx(cap)
+    
     while True:
         ret, frame = cap.read()
         if not ret: break            
@@ -66,7 +59,7 @@ def plot_annotations(video_path, annotations_path, output_video_path=None):
         if frame_idx in keep_frames:
             with open(annotations[ann_idx], 'r') as file:
                 data = json.load(file)
-                process_frame(frame, data)        
+                process_frame(frame, data)    
                 
                 if writer: writer.write(frame)
                 ann_idx += 1
@@ -75,12 +68,12 @@ def plot_annotations(video_path, annotations_path, output_video_path=None):
                 cv2.namedWindow("Frame", cv2.WINDOW_NORMAL)
                 cv2.imshow("Frame", frame)
                 cv2.resizeWindow("Frame", 2560, 1440)
-                key = cv2.waitKey(25) & 0xFF
-                
-                
-            if key == ord('q'):
-                print("Exiting visualization.")
-                break
+                key = cv2.waitKey(100) & 0xFF
+                        
+                        
+                if key == ord('q'):
+                    print("Exiting visualization.")
+                    break
 
         frame_idx += 1           
      
@@ -110,6 +103,7 @@ if __name__ == '__main__':
     #        frame_idx += 1           
     #    print(f"Expected frames: {target_frames}, Extracted frames: {tf}")  
     ######################################################################
+    
         
 
     p = argparse.ArgumentParser(description='plot the annotations')
