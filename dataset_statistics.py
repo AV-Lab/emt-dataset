@@ -93,3 +93,40 @@ print(f'Total number of agents: {total}')
 print(f'Total number of vehciles: {vehciles_pred}')
 print(f'Total number of pedestrians: {pedestrian_pred}')
 
+#######################################################################################################################
+
+
+################################## Intention statistics ################################################################
+
+annot_dir = "data/annotations/prediction_annotations"
+annotations = os.listdir(annot_dir)
+
+vehciles_pred = 0
+pedestrian_pred = 0
+total = 0
+
+vehicles =set([        
+    'Car', 
+    'Large_vehicle', 
+    'Medium_vehicle',
+    'Bus',
+    'Emergency_vehicle',
+    'Small_motorised_vehicle'])
+
+for ann in annotations:
+    ann_file = os.path.join(annot_dir, ann) 
+    tracklets = {}
+    with open(ann_file, 'r') as file:
+        data = json.load(file)
+        for k,v in data.items():
+            if v['class'] == 'Pedestrian':
+                pedestrian_pred += 1
+            elif v['class'] in vehicles:
+                vehciles_pred += 1
+            total += 1
+
+print(f'Total number of agents: {total}')
+print(f'Total number of vehciles: {vehciles_pred}')
+print(f'Total number of pedestrians: {pedestrian_pred}')
+
+#######################################################################################################################

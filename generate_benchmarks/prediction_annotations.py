@@ -43,17 +43,21 @@ def generate_prediction_annotations(raw_annotations, prediction_annotations_path
                 frame_id = file.split('.')[0]
                 
                 for instance in data[0]['instances']: 
-                    object_type = next(
-                        (attr["value"] for attr in instance["classValues"] if attr["name"] == "Agent"), "Unknown"
-                    )
                     
-                    if object_type =="Unknown" or  object_type in ignore_objects: continue
-                    if object_type=="Emergency vehicle": object_type = "Emergency_vehicle"
+                    values = instance['classValues']
+                    agent = values[0]['value']
+                    location = values[1]['value']
+                    action = values[2]['value']
+                    
+                    if agent =="Unknown" or  agent in ignore_objects: continue
+                    if agent=="Emergency vehicle": agent = "Emergency_vehicle"
+                    
+                    if agent != "Pedestrian" and action == "Stopped" and "parking" in location: continue
                      
                     # Extract and remap trackId
                     track_id = instance["trackId"]
                     if track_id not in prediction_labels:
-                        prediction_labels[track_id] = {'object_id':last_id, 'class':object_type, 'frames':[], 'bbox':[]}
+                        prediction_labels[track_id] = {'object_id':last_id, 'class':agent, 'frames':[], 'bbox':[]}
                         last_id += 1
                         
                     
