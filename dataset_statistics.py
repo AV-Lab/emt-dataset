@@ -7,80 +7,89 @@ Created on Mon Sep 30 09:45:06 2024
 """
 import json, argparse
 import os
+import statistics as s
 
-# Computing total number of bounding box annotations
-# total number of unique agents 
-# total number of vehicles
-# total number of pedestrians
-
-
-if __name__ == '__main__':
-    p = argparse.ArgumentParser(description='compute the dataset statistics')
-    p.add_argument('annot_dir', type=str, help='Annotations directory')
-    args = p.parse_args()
+################################## Tracking statistics ################################################################
     
-    # retireve all videos
-    annotations = os.listdir(args.annot_dir)
-    
-    bounding_box_count = 0
-    unique_agents_vehicles = set()
-    unique_agents_people = set()
-    unique_agents_rest = set()
-    # vehicles = set(['Car', 
-    #                 'Large_vehicle', 
-    #                 'Medium_vehicle',
-    #                 'Motorbike',
-    #                 'Bus',
-    #                 'Emergency_vehicle',
-    #                 'Small_motorised_vehicle'])
-    vehicles =set([        
-        'Car', 
-        'Large_vehicle', 
-        'Medium_vehicle',
-        'Motorbike',
-        'Bus',
-        'Emergency_vehicle',
-        'Small_motorised_vehicle'])
-    for ann in annotations:
-        ann_dir = os.path.join(args.annot_dir, ann) 
-        annotation_files = os.listdir(ann_dir)
-        annotations_json = [ann_dir + '/' + ann_file for ann_file in annotation_files if ann_file.endswith('.json')]
-    
-        for ann_json in annotations_json:    
-            with open(ann_json, 'r') as file:
-                data = json.load(file)                
-                for inst in data[0]['instances']:
-                    trackId = inst['trackId']
-                    
-                    # if len(inst['classValues']) != 3:
-                    #     continue
-                    object_type = next(
-                        (attr["value"] for attr in inst["classValues"] if attr["name"] == "Agent"), "Unknown"
-                    )
+annot_dir = "data/annotations/tracking_annotations/kitti"
+annotations = os.listdir(annot_dir)
 
-                    if object_type == "Emergency vehicle":
-                        # print("object_type: %s" % object_type)
-                        # print("Emergency Vehicle Fix")
-                        object_type = "Emergency_vehicle"
-                    
-                    if object_type == 'Pedestrian' or object_type == 'Cyclist' :
-                        unique_agents_people.add(trackId)
-                        bounding_box_count += 1
-                    elif object_type in vehicles:
-                        unique_agents_vehicles.add(trackId)
-                        bounding_box_count += 1
-                    else:
-                        unique_agents_rest.add(trackId)
-                        
-    pd = len(unique_agents_people)  
-    vh = len(unique_agents_vehicles)                  
+vehciles_tracklets = 0
+pedestrian_tracklets = 0
+cyclist_tracklets = 0
+motorbike_tracklets = 0
+tracklets_length = []
 
-    print('Total number of bounding box annotations: ', bounding_box_count)
-    print('Total number of people (pedestrians and Cylicsts): ', pd)
-    print('Total number of vehicles: ', vh)
-    print('Total number of unique agents: ', pd + vh)
+vehicles =set([        
+    'Car', 
+    'Large_vehicle', 
+    'Medium_vehicle',
+    'Bus',
+    'Emergency_vehicle',
+    'Small_motorised_vehicle'])
+
+for ann in annotations:
+    ann_file = os.path.join(annot_dir, ann) 
+    tracklets = {}
+    with open(ann_file, 'r') as file:
+        for line in file:
+            parts = line.strip().split()
+
+            frame_id = parts[0]
+            track_id = parts[1]
+            obj_class = parts[2]
         
-        
-    
+            if track_id not in tracklets:
+                tracklets[track_id] = {'obj_class':obj_class, 'frames':[]}
+            tracklets[track_id]['frames'].append(frame_id)   
+            
+    # count objects and compute mean trakcing length
+    for k,v in tracklets.items():
+        if v['obj_class'] in vehicles: vehciles_tracklets += 1
+        elif v['obj_class'] == "Pedestrian": pedestrian_tracklets += 1
+        elif v['obj_class'] == "Cyclist": cyclist_tracklets += 1
+        elif v['obj_class'] == "Motorbike": motorbike_tracklets += 1
+        tracklets_length.append(len(v['frames']))
 
+print(f'Total number of vehciles: {vehciles_tracklets}')
+print(f'Total number of pedestrians: {pedestrian_tracklets}')
+print(f'Total number of motorbikes: {motorbike_tracklets}')
+print(f'Total number of cyclists: {cyclist_tracklets}')
+print(f'Mean tracklet length: {s.mean(tracklets_length)}')    
+    
+#######################################################################################################################
+
+
+################################## Prediction statistics ################################################################
+
+annot_dir = "data/annotations/prediction_annotations"
+annotations = os.listdir(annot_dir)
+
+vehciles_pred = 0
+pedestrian_pred = 0
+total = 0
+
+vehicles =set([        
+    'Car', 
+    'Large_vehicle', 
+    'Medium_vehicle',
+    'Bus',
+    'Emergency_vehicle',
+    'Small_motorised_vehicle'])
+
+for ann in annotations:
+    ann_file = os.path.join(annot_dir, ann) 
+    tracklets = {}
+    with open(ann_file, 'r') as file:
+        data = json.load(file)
+        for k,v in data.items():
+            if v['class'] == 'Pedestrian':
+                pedestrian_pred += 1
+            elif v['class'] in vehicles:
+                vehciles_pred += 1
+            total += 1
+
+print(f'Total number of agents: {total}')
+print(f'Total number of vehciles: {vehciles_pred}')
+print(f'Total number of pedestrians: {pedestrian_pred}')
 

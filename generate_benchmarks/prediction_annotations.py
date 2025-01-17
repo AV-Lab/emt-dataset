@@ -68,11 +68,11 @@ def generate_prediction_annotations(raw_annotations, prediction_annotations_path
                     prediction_labels[track_id]['bbox'].append((bbox_left, bbox_top, bbox_right, bbox_bottom))
                     prediction_labels[track_id]['frames'].append(int(frame_id))
 
-        objects_predictions = {pd['object_id']: {'class': pd['class'], 'frames': pd['frames'], 'bbox': pd['bbox']} for pd in prediction_labels.values()}
+        objects_predictions = {pd['object_id']: {'class': pd['class'], 'frames': pd['frames'], 'bbox': pd['bbox']} for pd in prediction_labels.values() if len(pd['frames']) >= 20}
         objects_predictions = dict(sorted(objects_predictions.items()))
         
         file_name = ann.split('/')[-1]
-        save_labels_to_txt(prediction_labels, prediction_annotations_path, file_name)
+        save_labels_to_txt(objects_predictions, prediction_annotations_path, file_name)
         
 
 def main():
