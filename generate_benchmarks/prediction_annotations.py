@@ -51,13 +51,12 @@ def generate_prediction_annotations(raw_annotations, prediction_annotations_path
                     
                     if agent =="Unknown" or  agent in ignore_objects: continue
                     if agent=="Emergency vehicle": agent = "Emergency_vehicle"
-                    
                     if agent != "Pedestrian" and action == "Stopped" and "parking" in location: continue
                      
                     # Extract and remap trackId
                     track_id = instance["trackId"]
-                    if track_id not in prediction_labels:
-                        prediction_labels[track_id] = {'object_id':last_id, 'class':agent, 'frames':[], 'bbox':[]}
+                    if (track_id, agent) not in prediction_labels:
+                        prediction_labels[(track_id, agent)] = {'object_id':last_id, 'class':agent, 'frames':[], 'bbox':[], 'intention':[]}
                         last_id += 1
                         
                     
@@ -69,14 +68,41 @@ def generate_prediction_annotations(raw_annotations, prediction_annotations_path
                     bbox_bottom = max(point["y"] for point in points)
                     
                     
-                    prediction_labels[track_id]['bbox'].append((bbox_left, bbox_top, bbox_right, bbox_bottom))
-                    prediction_labels[track_id]['frames'].append(int(frame_id))
+                    prediction_labels[(track_id, agent)]['bbox'].append((bbox_left, bbox_top, bbox_right, bbox_bottom))
+                    prediction_labels[(track_id, agent)]['frames'].append(int(frame_id))
 
-        objects_predictions = {pd['object_id']: {'class': pd['class'], 'frames': pd['frames'], 'bbox': pd['bbox']} for pd in prediction_labels.values() if len(pd['frames']) >= 20}
+        objects_predictions = {pd['object_id']: {'class': pd['class'], 'frames': pd['frames'], 'bbox': pd['bbox']} for pd in prediction_labels.values()}
         objects_predictions = dict(sorted(objects_predictions.items()))
         
+        # We need to split to make sure that the frames sequence is consequitive
+        split_objects_predictions = {}
+        for k,v in objects_predictions.items():
+            beg = 0
+            first_record = True
+            for idx in range(1, len(v['frames'])):
+                if v['frames'][idx] - v['frames'][idx-1] != 1: # if not consequitive frames
+                    if first_record:
+                        key = k
+                    else:
+                        key = last_id
+                        last_id += 1
+                    
+                    split_objects_predictions[key] =  {'class': v['class'], 'frames': v['frames'][beg:idx], 'bbox': v['bbox'][beg:idx]}
+                    beg = idx
+                
+        # filter entries with trajectories less than 20 points
+        filtered_objects_predictions = {k:v for k,v in split_objects_predictions.items() if len(v['frames']) >= 20}
+        
+        # check if there are records with no consequitive frames
+        error = 0
+        for k, v in filtered_objects_predictions.items():
+            print(v)
+            if not(sorted(v['frames']) == list(range(min(v['frames']), max(v['frames']) + 1))):
+                error += 1
+        print(len(filtered_objects_predictions.keys()), error)
+        
         file_name = ann.split('/')[-1]
-        save_labels_to_txt(objects_predictions, prediction_annotations_path, file_name)
+        save_labels_to_txt(filtered_objects_predictions, prediction_annotations_path, file_name)
         
 
 def main():

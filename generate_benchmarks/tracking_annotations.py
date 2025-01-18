@@ -57,10 +57,10 @@ def generate_kitti_annotations(raw_annotations, tracking_annotations_path):
                     
                     # Extract and remap trackId
                     track_id = instance["trackId"]
-                    if track_id not in tracking_ids:
-                        tracking_ids[track_id] = last_id
+                    if (track_id, object_type) not in tracking_ids:
+                        tracking_ids[(track_id, object_type)] = last_id
                         last_id += 1
-                    track_id = tracking_ids[track_id]
+                    track_id = tracking_ids[(track_id, object_type)]
                     
                     # Extract bounding box points
                     points = instance["contour"]["points"]
@@ -123,10 +123,10 @@ def generate_gmot_annotations(raw_annotations, tracking_annotations_path):
                      
                     # Extract and remap trackId
                     track_id = instance["trackId"]
-                    if track_id not in tracking_ids:
-                        tracking_ids[track_id] = last_id
+                    if (track_id, object_type) not in tracking_ids:
+                        tracking_ids[(track_id, object_type)] = last_id
                         last_id += 1
-                    track_id = tracking_ids[track_id]
+                    track_id = tracking_ids[(track_id, object_type)]
                     
                     # Extract bounding box points
                     points = instance["contour"]["points"]

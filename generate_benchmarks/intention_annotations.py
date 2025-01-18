@@ -9,16 +9,64 @@ Created on Tue Jan 14 13:14:49 2025
 
 import json
 import os
-
+from collections import Counter
 
 # mapping between intentions and actions 
+pedestrian_map = {'Moving' : 'walking', 
+                  'Crossing_road_from_left' : 'crossing', 
+                  'Pushing_Object' : 'walking', 
+                  'Crossing_road_from_right': 'crossing', 
+                  'Moving_towards' : 'walking', 
+                  'Breaking' : 'walking', 
+                  'Moving_away' : 'walking', 
+                  'Turning_left' : 'walking', 
+                  'Waiting_to_cross' : 'waiting_to_cross', 
+                  'Crossing' : 'crossing', 
+                  'Stopped' : 'stopped'}
+
+# we keep on the pavements 
+cyclist_map = {'Moving' : 'lane-keeping',
+               'Moving_towards' : 'lane-keeping',
+               'Turning_left' : 'turn-left',
+               'Waiting_to_cross' : 'waiting_to_cross',
+               'Crossing' : 'crossing'} 
+
+# For motorbikes
+motorbike_ignore = set([('Moving', 'On_pavement'), 
+                        ('Moving_towards', 'On_left_pavement'), 
+                        ('Moving_towards', 'On_right_pavement')]) 
+motorbike_map = {'Stopped' : 'stopped',
+                  'Breaking' : 'braking',
+                  'Moving_left' : 'merge-left',
+                  'Moving_right' : 'merge-right',
+                  'Turning_left' : 'turn-left',
+                  'Turning_right' : 'turn-right',
+                  'Moving' : 'lane-keeping',
+                  'Moving_towards' : 'lane-keeping',
+                  'Moving_away' : 'lane-keeping',
+                  'Indicating_left' : 'lane-keeping'}
+
+# For small motorised vehicles
+small_motorised_vehicles_ignore = set([('Moving_towards', 'On_left_pavement'),
+                                       ('Moving_towards', 'On_right_pavement'),
+                                       ('Moving', 'On_left_pavement'), 
+                                       ('Moving', 'On_right_pavement')]) 
+small_motorised_vehicles_map = {'Crossing_road_from_right': 'crossing', 
+                                'Crossing' : 'crossing',
+                                'Waiting_to_cross' : 'waiting_to_cross',
+                                'Stopped' : 'stopped',
+                                'Moving' : 'lane-keeping',
+                                'Moving_towards' : 'lane-keeping',
+                                'Moving_away' : 'lane-keeping'}
 
 
 
+# For vehicles 
 
 
-#sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+ 
 ignore_objects = set(["Vehicle_traffic_light", "Other_traffic_light", "AV"])
+vehicles_category = set(['Car', "Medium_vehicle", "Large_vehicle", "Bus", "Emergency_vehicle"])
 
 def read_json(filename):
     with open(filename,'r') as json_file:
@@ -36,7 +84,8 @@ def save_labels_to_txt(labels, folder_path, file_name):
         
         
 def generate_intention_annotations(raw_annotations, prediction_annotations_path):
-
+    actions = []
+    tracks = []
     for ann in raw_annotations:
         files = sorted(os.listdir(ann))
         prediction_labels = {} 
@@ -50,17 +99,39 @@ def generate_intention_annotations(raw_annotations, prediction_annotations_path)
                 frame_id = file.split('.')[0]
                 
                 for instance in data[0]['instances']: 
-                    object_type = next(
-                        (attr["value"] for attr in instance["classValues"] if attr["name"] == "Agent"), "Unknown"
-                    )
+                    values = instance['classValues']
+                    agent = values[0]['value']
+                    location = values[1]['value']
+                    action = values[2]['value']
+                    intention = (action, location)
                     
-                    if object_type =="Unknown" or  object_type in ignore_objects: continue
-                    if object_type=="Emergency vehicle": object_type = "Emergency_vehicle"
-                     
+                    if agent =="Unknown" or  agent in ignore_objects: continue
+                    if agent=="Emergency vehicle": agent = "Emergency_vehicle"
+                    if agent != "Pedestrian" and action == "Stopped" and "parking" in location: continue
+                    
+                    
+                    #if agent in vehicles_category:
+                    #    continue
+                    #if agent == "Small_motorised_vehicle":
+                    #    actions.append(intention)
+                    
+                    tracks.append((instance["trackId"], agent))
+                                        
+                    if agent == 'Pedestrian':
+                        intention = pedestrian_map[action]
+                    elif agent == 'Cyclist':
+                        intention = cyclist_map[action]
+                    elif agent == 'Motorbike':
+                        if intention in motorbike_ignore: continue
+                        intention = motorbike_map[action]
+                    elif agent == "Small_motorised_vehicle":
+                        if intention in small_motorised_vehicles_ignore: continue
+                        intention = small_motorised_vehicles_map[action]     
+                    
                     # Extract and remap trackId
                     track_id = instance["trackId"]
-                    if track_id not in prediction_labels:
-                        prediction_labels[track_id] = {'object_id':last_id, 'class':object_type, 'frames':[], 'bbox':[]}
+                    if (track_id, agent) not in prediction_labels:
+                        prediction_labels[(track_id, agent)] = {'object_id':last_id, 'class':agent, 'frames':[], 'bbox':[], 'intention':[]}
                         last_id += 1
                         
                     
@@ -72,19 +143,38 @@ def generate_intention_annotations(raw_annotations, prediction_annotations_path)
                     bbox_bottom = max(point["y"] for point in points)
                     
                     
-                    prediction_labels[track_id]['bbox'].append((bbox_left, bbox_top, bbox_right, bbox_bottom))
-                    prediction_labels[track_id]['frames'].append(int(frame_id))
+                    prediction_labels[(track_id, agent)]['bbox'].append((bbox_left, bbox_top, bbox_right, bbox_bottom))
+                    prediction_labels[(track_id, agent)]['frames'].append(int(frame_id))
+                    prediction_labels[(track_id, agent)]['intention'].append(intention)
 
-        objects_predictions = {pd['object_id']: {'class': pd['class'], 'frames': pd['frames'], 'bbox': pd['bbox']} for pd in prediction_labels.values() if len(pd['frames'] >= 20)}
+        objects_predictions = {pd['object_id']: {'class': pd['class'], 'frames': pd['frames'], 'bbox': pd['bbox'], 'intention':pd['intention']} for pd in prediction_labels.values() if len(pd['frames']) >= 20}
         objects_predictions = dict(sorted(objects_predictions.items()))
         
-        file_name = ann.split('/')[-1]
-        save_labels_to_txt(prediction_labels, prediction_annotations_path, file_name)
+        
+        tracks = sorted(set(tracks))
+        tracks = Counter(t[0] for t in tracks)
+        print(tracks)
+        print(len(tracks))
+        print(len(objects_predictions.keys()))
+        
+        print(a)
+        #########################################################################
+        # map (action, location) to intention
+        
+        
+        for k,v in objects_predictions.items():
+            if v['class'] == 'Small_motorised_vehicle':
+                print(k,v)
+            
+        #print(a)
+        
+        #file_name = ann.split('/')[-1]
+        #save_labels_to_txt(prediction_labels, prediction_annotations_path, file_name)
         
 
 def main():
     raw_annotations_path = "../data/raw_annotations"
-    prediction_annotations_path = "../data/annotations/prediction_annotations"
+    prediction_annotations_path = "../data/annotations/intention_annotations"
     raw_annotations = [raw_annotations_path + '/' + f for f in os.listdir(raw_annotations_path)]
     generate_intention_annotations(raw_annotations, prediction_annotations_path)
     
