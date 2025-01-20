@@ -60,13 +60,70 @@ small_motorised_vehicles_map = {'Crossing_road_from_right': 'crossing',
                                 'Moving_away' : 'lane-keeping'}
 
 
-
+ ('Hazard_lights_on', 'In_outgoing_lane'),
+  ('Hazard_lights_on', 'In_incoming_lane'), 
+   ('Indicating_right', 'At_junction'), 
+    ('Indicating_left', 'At_junction'),
 # For vehicles 
-
+vehicles_map = {('Hazard_lights_on', 'In_left_parking_area'):'stopped', 
+                ('Moving_away', 'At_junction'):'lane-keeping',
+                ('Indicating_left', 'In_vehicle_lane'):'lane-keeping',
+                ('Moving_right', 'At_bus_stop'):'merge-right',
+                ('Moving_towards', 'In_incoming_lane'):'lane-keeping', 
+                ('Turning_right', 'In_incoming_lane'):'turn-right',
+                ('Stopped', 'At_bus_stop'):'stopped',
+                ('Moving', 'At_crossing'):'lane-keeping',  
+                ('Revering', 'In_right_parking_area'):'reversing', 
+                ('Breaking', 'At_bus_stop'):'braking',
+                ('Turning_left', 'In_incoming_lane'):'turn-left',
+                ('Moving_away', 'In_incoming_lane'):'lane-keeping', 
+                ('Turning_right', 'In_vehicle_lane'):'turn-right', 
+                ('Moving', 'In_right_parking_area'):'lane-keeping', 
+                ('Indicating_right', 'In_outgoing_lane'):'lane-keeping',
+                ('Turning_right', 'At_crossing'):'turn-right',
+                ('Moving_right', 'In_outgoing_lane'):'merge-right', 
+                ('Breaking', 'In_outgoing_lane'):'braking', 
+                ('Moving_left', 'In_outgoing_lane'):'merge-left',
+                ('Moving_away', 'In_vehicle_lane'):'lane-keeping',  
+                ('Turning_right', 'In_right_parking_area'):'turn-right',
+                ('Stopped', 'In_outgoing_lane'):'stopped', 
+                ('Turning_left', 'In_vehicle_lane'):'turn-left',
+                ('Breaking', 'In_left_parking_area'):'braking', 
+                ('Moving_right', 'At_junction'):'merge-right', 
+                ('Moving_left', 'At_junction'):'merge-left',
+                ('Stopped', 'At_junction'):'stopped', 
+                ('Stopped', 'On_left_pavement'):'stopped', 
+                ('Breaking', 'At_junction'):'braking', 
+                ('Hazard_lights_on', 'In_right_parking_area'):'stopped', 
+                ('Moving_right', 'In_incoming_lane'):'merge-right', 
+                ('Stopped', 'In_incoming_lane'):'stopped', 
+                ('Moving_right', 'In_vehicle_lane'):'merge-right', 
+                ('Indicating_right', 'In_vehicle_lane'):'lane-keeping', 
+                ('Breaking', 'In_vehicle_lane'):'braking', 
+                ('Moving_left', 'In_vehicle_lane'):'merge-left', 
+                ('Indicating_left', 'In_outgoing_lane'):'lane-keeping', 
+                ('Stopped', 'In_vehicle_lane'):'stopped', 
+                ('Moving_left', 'In_right_parking_area'):'merge-left', 
+                ('Moving', 'In_outgoing_lane'):'lane-keeping', 
+                ('Breaking', 'In_right_parking_area'):'braking', 
+                ('Moving_towards', 'In_left_parking_area'):'lane-keeping',  
+                ('Moving_towards', 'In_outgoing_lane'):'lane-keeping',  
+                ('Turning_right', 'In_outgoing_lane'):'turn-right', 
+                ('Turning_right', 'In_left_parking_area'):'turn-right', 
+                ('Moving', 'At_junction'):'lane-keeping', 
+                ('Turning_left', 'In_outgoing_lane'):'turn-left', 
+                ('Moving_away', 'In_outgoing_lane'):'lane-keeping',  
+                ('Moving_towards', 'At_junction'):'lane-keeping',  
+                ('Moving_towards', 'On_left_pavement'):'lane-keeping',  
+                ('Turning_right', 'At_junction'):'turn-right', 
+                ('Hazard_lights_on', 'At_bus_stop'):'stopped', 
+                ('Revering', 'In_incoming_lane'):'reversing', 
+                ('Turning_left', 'At_junction'):'turn-left',  
+                ('Moving', 'In_incoming_lane'):'lane-keeping'}
 
  
 ignore_objects = set(["Vehicle_traffic_light", "Other_traffic_light", "AV"])
-vehicles_category = set(['Car', "Medium_vehicle", "Large_vehicle", "Bus", "Emergency_vehicle"])
+vehicles_category = set(["Car", "Medium_vehicle", "Large_vehicle", "Bus", "Emergency_vehicle"])
 
 def read_json(filename):
     with open(filename,'r') as json_file:
@@ -110,10 +167,10 @@ def generate_intention_annotations(raw_annotations, prediction_annotations_path)
                     if agent != "Pedestrian" and action == "Stopped" and "parking" in location: continue
                     
                     
-                    #if agent in vehicles_category:
+                    if agent in vehicles_category:
                     #    continue
                     #if agent == "Small_motorised_vehicle":
-                    #    actions.append(intention)
+                        actions.append(intention)
                     
                     tracks.append((instance["trackId"], agent))
                                         
@@ -150,21 +207,23 @@ def generate_intention_annotations(raw_annotations, prediction_annotations_path)
         objects_predictions = {pd['object_id']: {'class': pd['class'], 'frames': pd['frames'], 'bbox': pd['bbox'], 'intention':pd['intention']} for pd in prediction_labels.values() if len(pd['frames']) >= 20}
         objects_predictions = dict(sorted(objects_predictions.items()))
         
+    print(set(actions))
+        #print(a)
         
-        tracks = sorted(set(tracks))
-        tracks = Counter(t[0] for t in tracks)
-        print(tracks)
-        print(len(tracks))
-        print(len(objects_predictions.keys()))
+        #tracks = sorted(set(tracks))
+        #tracks = Counter(t[0] for t in tracks)
+        #print(tracks)
+        #print(len(tracks))
+        #print(len(objects_predictions.keys()))
         
-        print(a)
+        #print(a)
         #########################################################################
         # map (action, location) to intention
         
         
-        for k,v in objects_predictions.items():
-            if v['class'] == 'Small_motorised_vehicle':
-                print(k,v)
+        ##for k,v in objects_predictions.items():
+        #    if v['class'] == 'Small_motorised_vehicle':
+        #        print(k,v)
             
         #print(a)
         
