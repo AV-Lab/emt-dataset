@@ -10,6 +10,7 @@ Created on Tue Jan 14 13:14:49 2025
 import json
 import os
 from collections import Counter
+import numpy as np
 
 # mapping between intentions and actions 
 pedestrian_map = {'Moving' : 'walking', 
@@ -59,11 +60,6 @@ small_motorised_vehicles_map = {'Crossing_road_from_right': 'crossing',
                                 'Moving_towards' : 'lane-keeping',
                                 'Moving_away' : 'lane-keeping'}
 
-
- ('Hazard_lights_on', 'In_outgoing_lane'),
-  ('Hazard_lights_on', 'In_incoming_lane'), 
-   ('Indicating_right', 'At_junction'), 
-    ('Indicating_left', 'At_junction'),
 # For vehicles 
 vehicles_map = {('Hazard_lights_on', 'In_left_parking_area'):'stopped', 
                 ('Moving_away', 'At_junction'):'lane-keeping',
@@ -121,6 +117,10 @@ vehicles_map = {('Hazard_lights_on', 'In_left_parking_area'):'stopped',
                 ('Turning_left', 'At_junction'):'turn-left',  
                 ('Moving', 'In_incoming_lane'):'lane-keeping'}
 
+dynamic_static_map =  set([('Hazard_lights_on', 'In_outgoing_lane'), 
+                         ('Hazard_lights_on', 'In_incoming_lane'),  
+                         ('Indicating_right', 'At_junction'), 
+                         ('Indicating_left', 'At_junction')])
  
 ignore_objects = set(["Vehicle_traffic_light", "Other_traffic_light", "AV"])
 vehicles_category = set(["Car", "Medium_vehicle", "Large_vehicle", "Bus", "Emergency_vehicle"])
@@ -137,12 +137,13 @@ def save_labels_to_txt(labels, folder_path, file_name):
     with open(file_path, "w") as file:
         json.dump(labels, file)
     print(f"Saved: {file_path}")
+    
+def is_object_moving(bounding_boxes, threshold=1.0):
+    centers = [( (x1 + x2) / 2, (y1 + y2) / 2) for x1, y1, x2, y2 in bounding_boxes]
+    distances = [np.linalg.norm(np.array(centers[i]) - np.array(centers[i - 1])) for i in range(1, len(centers))]
+    return any(distance > threshold for distance in distances)
 
-        
-        
-def generate_intention_annotations(raw_annotations, prediction_annotations_path):
-    actions = []
-    tracks = []
+def generate_intention_annotations(raw_annotations, intention_annotations_path):
     for ann in raw_annotations:
         files = sorted(os.listdir(ann))
         prediction_labels = {} 
@@ -165,14 +166,6 @@ def generate_intention_annotations(raw_annotations, prediction_annotations_path)
                     if agent =="Unknown" or  agent in ignore_objects: continue
                     if agent=="Emergency vehicle": agent = "Emergency_vehicle"
                     if agent != "Pedestrian" and action == "Stopped" and "parking" in location: continue
-                    
-                    
-                    if agent in vehicles_category:
-                    #    continue
-                    #if agent == "Small_motorised_vehicle":
-                        actions.append(intention)
-                    
-                    tracks.append((instance["trackId"], agent))
                                         
                     if agent == 'Pedestrian':
                         intention = pedestrian_map[action]
@@ -183,7 +176,10 @@ def generate_intention_annotations(raw_annotations, prediction_annotations_path)
                         intention = motorbike_map[action]
                     elif agent == "Small_motorised_vehicle":
                         if intention in small_motorised_vehicles_ignore: continue
-                        intention = small_motorised_vehicles_map[action]     
+                        intention = small_motorised_vehicles_map[action] 
+                    elif agent in vehicles_category:
+                        if intention in vehicles_map:
+                            intention = vehicles_map[intention]
                     
                     # Extract and remap trackId
                     track_id = instance["trackId"]
@@ -204,38 +200,53 @@ def generate_intention_annotations(raw_annotations, prediction_annotations_path)
                     prediction_labels[(track_id, agent)]['frames'].append(int(frame_id))
                     prediction_labels[(track_id, agent)]['intention'].append(intention)
 
-        objects_predictions = {pd['object_id']: {'class': pd['class'], 'frames': pd['frames'], 'bbox': pd['bbox'], 'intention':pd['intention']} for pd in prediction_labels.values() if len(pd['frames']) >= 20}
+        objects_predictions = {pd['object_id']: {'class': pd['class'], 'frames': pd['frames'], 'bbox': pd['bbox'], 'intention':pd['intention']} for pd in prediction_labels.values()}
         objects_predictions = dict(sorted(objects_predictions.items()))
         
-    print(set(actions))
-        #print(a)
-        
-        #tracks = sorted(set(tracks))
-        #tracks = Counter(t[0] for t in tracks)
-        #print(tracks)
-        #print(len(tracks))
-        #print(len(objects_predictions.keys()))
-        
-        #print(a)
-        #########################################################################
-        # map (action, location) to intention
-        
-        
-        ##for k,v in objects_predictions.items():
-        #    if v['class'] == 'Small_motorised_vehicle':
-        #        print(k,v)
+        # We need to split to make sure that the frames sequence is consequitive and replace intentions for vehicles in   
+        split_objects_predictions = {}
+        for k,v in objects_predictions.items():
+            beg = 0
+            first_record = True
+            for idx in range(1, len(v['frames'])):
+                if v['frames'][idx] - v['frames'][idx-1] != 1: # if not consequitive frames
+                    if first_record:
+                        key = k
+                    else:
+                        key = last_id
+                        last_id += 1
+                    
+                    mapped_intentions = []
+                    dynamic = is_object_moving(v['bbox'][beg:idx])
+                    
+                    for i in v['intention'][beg:idx]:
+                        if i in dynamic_static_map:
+                            i = "lane-keeping" if dynamic else "stopped"
+                        mapped_intentions.append(i)
+                            
+                    split_objects_predictions[key] =  {'class': v['class'], 'frames': v['frames'][beg:idx], 'bbox': v['bbox'][beg:idx], 'intention': mapped_intentions}
+                    beg = idx
+                    
+        # filter entries with trajectories less than 20 points
+        filtered_objects_predictions = {k:v for k,v in split_objects_predictions.items() if len(v['frames']) >= 20}
             
-        #print(a)
+        # check if there are records with no consequitive frames
+        error = 0
+        for k, v in filtered_objects_predictions.items():
+            #n = np.sum([1 if isinstance(i, tuple) else 0 for i in v['intention']])
+            if not(sorted(v['frames']) == list(range(min(v['frames']), max(v['frames']) + 1))):
+                error += 1
+        print(len(filtered_objects_predictions.keys()), error)
         
-        #file_name = ann.split('/')[-1]
-        #save_labels_to_txt(prediction_labels, prediction_annotations_path, file_name)
+        file_name = ann.split('/')[-1]
+        save_labels_to_txt(filtered_objects_predictions, intention_annotations_path, file_name)
         
 
 def main():
     raw_annotations_path = "../data/raw_annotations"
-    prediction_annotations_path = "../data/annotations/intention_annotations"
+    intention_annotations_path = "../data/annotations/intention_annotations"
     raw_annotations = [raw_annotations_path + '/' + f for f in os.listdir(raw_annotations_path)]
-    generate_intention_annotations(raw_annotations, prediction_annotations_path)
+    generate_intention_annotations(raw_annotations, intention_annotations_path)
     
 if __name__ == '__main__':
     main()
