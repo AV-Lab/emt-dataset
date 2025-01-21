@@ -28,13 +28,6 @@ header {
     border-radius: 8px;
 }
 
-.table-section {
-    margin-top: 40px;
-    background-color: #fff3e0; /* Light orange background for the table section */
-    padding: 20px;
-    border-radius: 8px;
-}
-
 /* Hide the sidebar completely */
 .md-sidebar--primary {
     display: none;
@@ -209,4 +202,14 @@ html, body {
 
 .md-footer {
     display: none;
+}
+
+table {
+    width: 100%;
+}
+table td:first-child {
+    width: 35%; /* Adjust the width of the first column */
+}
+table td:last-child {
+    width: 65%; /* Adjust the width of the second column */
 }
