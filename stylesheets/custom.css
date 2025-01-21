@@ -210,23 +210,3 @@ html, body {
 .md-footer {
     display: none;
 }
-
-.main-content a {
-    position: relative;
-    z-index: 2; /* Higher than background layers */
-}
-
-.main::after {
-    z-index: 0;
-}
-
-a {
-    color: #007bff; /* Default link color (blue) */
-    all: initial; /* Resets to browser default styles */
-    text-decoration: underline; /* Restore default underline */
-}
-
-a:hover {
-    color: #0056b3; /* Darker blue on hover */
-    text-decoration: none; /* Optional: No underline on hover */
-}
