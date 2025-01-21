@@ -10,7 +10,7 @@
       
       
       
-        <link rel="next" href="dataset/">
+        <link rel="next" href="emt_dataset/">
       
       
       <link rel="icon" href="assets/images/favicon.png">
@@ -18,7 +18,7 @@
     
     
       
-        <title>ROAD-UAE</title>
+        <title>UAE Autonomous Driving Dataset</title>
       
     
     
@@ -79,7 +79,7 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="." title="ROAD-UAE" class="md-header__button md-logo" aria-label="ROAD-UAE" data-md-component="logo">
+    <a href="." title="UAE Autonomous Driving Dataset" class="md-header__button md-logo" aria-label="UAE Autonomous Driving Dataset" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54Z"/></svg>
@@ -93,13 +93,13 @@
       <div class="md-header__ellipsis">
         <div class="md-header__topic">
           <span class="md-ellipsis">
-            ROAD-UAE
+            UAE Autonomous Driving Dataset
           </span>
         </div>
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ROAD-UAE
+              UAE Autonomous Driving Dataset
             
           </span>
         </div>
@@ -175,7 +175,7 @@
   
     
   
-  ROAD-UAE
+  UAE Autonomous Driving Dataset
 
       </a>
     </li>
@@ -187,12 +187,29 @@
   
   
     <li class="md-tabs__item">
-      <a href="dataset/" class="md-tabs__link">
+      <a href="emt_dataset/" class="md-tabs__link">
         
   
     
   
-  Download Dataset
+  EMT Dataset
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="road_uae_dataset/" class="md-tabs__link">
+        
+  
+    
+  
+  ROAD-UAE Dataset
 
       </a>
     </li>
@@ -223,13 +240,13 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="." title="ROAD-UAE" class="md-nav__button md-logo" aria-label="ROAD-UAE" data-md-component="logo">
+    <a href="." title="UAE Autonomous Driving Dataset" class="md-nav__button md-logo" aria-label="UAE Autonomous Driving Dataset" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54Z"/></svg>
 
     </a>
-    ROAD-UAE
+    UAE Autonomous Driving Dataset
   </label>
   
   <ul class="md-nav__list" data-md-scrollfix>
@@ -252,7 +269,7 @@
         
   
   <span class="md-ellipsis">
-    ROAD-UAE
+    UAE Autonomous Driving Dataset
   </span>
   
 
@@ -269,11 +286,31 @@
   
   
     <li class="md-nav__item">
-      <a href="dataset/" class="md-nav__link">
+      <a href="emt_dataset/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
-    Download Dataset
+    EMT Dataset
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="road_uae_dataset/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    ROAD-UAE Dataset
   </span>
   
 
@@ -297,60 +334,49 @@
                   
 
 
-  <h1>ROAD-UAE</h1>
+  <h1>UAE Autonomous Driving Dataset</h1>
 
 <div class="main">
     <div class="main-content">
 
-<div class="features-section">
-  <div class="features-header">
-    <h2> ROAD-UAE Features</h2>
+      <div class="features-section">
+        <div class="features-header">
+          <h2> UAE-dataset Features</h2>
+        </div>
+
+        <div class="features-columns">
+          <div class="feature">
+            <h3>Continuous Footage</h3>
+            <p>Each video runs for 2.5 to 3 minutes, contributing to a total of 57 minutes of video in the dataset, covering over 150 kilometers.</p>
+          </div>
+              <div class="feature">
+            <h3>Heterogenous Annotations</h3>
+            <p>Five main categories of agents are annotated: pedestrians, vehicles, small motorized vehicles, motorbikes and cyclists.</p>
+          </div>
+              <div class="feature">
+            <h3>Variety of Scenarios</h3>
+            <p>Captures the unique road topologies and traffic congestion characteristics of the Arab Gulf Region. </p>
+          </div>
+          <div class="feature">
+            <h3>Tracking Annotations</h3>
+            <p>Bounding boxes with consistent tracking ids are provided for all road agents over the frames.</p>
+          </div>
+          <div class="feature">
+            <h3>Intention Annotations</h3>
+            <p>Intention labels are provided for all categories of agents indicating merging, keeping-lane, turning and crossing.</p>
+          </div>
+          <div class="feature">
+            <h3>Location Annotations</h3>
+            <p>Location labels are provided to indicate the landmark for each agent, like junction, crossing, parking and pavements.</p>
+          </div>
+        </div>
+
+        <div class="stats-header">
+          <h2>Download UAE Videos</h2>
+        </div>
+        <a href="https://www.dropbox.com/scl/fi/w81mdnkual8l4xdi9500q/videos.zip?rlkey=gqgwotuwyfmtb8igfn3pp181w&st=zd58mpa6&dl=0">Download Videos (archive)</a>   
+      </div>
   </div>
-
-  <div class="features-columns">
-    <div class="feature">
-      <h3>Continuous Footage</h3>
-      <p>Each video runs for 2.5 to 3 minutes, contributing to a total of 57 minutes of video in the dataset.</p>
-    </div>
-        <div class="feature">
-      <h3>Heterogenous Annotations</h3>
-      <p>Three main categories of agents are annotated and: people, vehicles, and traffic lights. The vehicle category is divided into 6 classes and people into pedestrians and cyclists.</p>
-    </div>
-        <div class="feature">
-      <h3>Variety of Scenarios</h3>
-      <p>Captures the unique road topology and traffic congestion characteristic of the Gulf Region. </p>
-    </div>
-    <div class="feature">
-      <h3>Tracking Annotations</h3>
-      <p>Bounding boxes with consistent tracking ids are provided for all road agents over the frames.</p>
-    </div>
-    <div class="feature">
-      <h3>Action Annotations</h3>
-      <p>Action labels generated as ”action tubes” at the frame level.</p>
-    </div>
-    <div class="feature">
-      <h3>Road Event Annotations</h3>
-      <p>Road event detections in the form of triplets (Agent, Action, Location) labeled as tubes of frame-level detections.</p>
-    </div>
-  </div>
-
-  <div class="stats-header">
-    <h2>ROAD-UAE Stats</h2>
-  </div>
-
-  <div class="stats-column">
-    <p><strong>Total number of annotated frames</strong>: 34 386</p>
-    <p><strong>Total number of boundind boxes annotations</strong>: 277 150</p>
-    <p><strong>Total number of unique agents</strong>: 4209</p>
-    <p><strong>Total duration of the videos</strong>: 57 min </p>
-    <p><strong>Total number of vehicles</strong>: 3729</p>
-    <p><strong>Total number of pedestrians</strong>: 222</p>
-  </div>
-</div>
-
-
-
-    </div>
 </div>
 
 
