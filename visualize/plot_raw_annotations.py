@@ -10,6 +10,7 @@ import os
 import cv2
 import sys
 import argparse
+import numpy as np
 import json
 
 # Add the root directory to sys.path
@@ -109,46 +110,28 @@ if __name__ == '__main__':
     
     
     
-    annotations_path = "../data/raw_annotations/"
-    annotations = [annotations_path + f for f in os.listdir(annotations_path)]
+    #annotations_path = "../data/raw_annotations/"
+    #annotations = [annotations_path + f for f in os.listdir(annotations_path)]
     
-    count = 0
-    events = {}
     
-    for ann in annotations:
-        print('**************************************************************/n')
-        print(ann)
-        print('**************************************************************/n')
-        annotation_files = sorted([ann + '/' + f for f in os.listdir(ann)])
+    #for ann in annotations:
+    #    nbbox = []
+    #    print('**************************************************************/n')
+    #    print(ann)
+    #    annotation_files = sorted([ann + '/' + f for f in os.listdir(ann)])
 
-        for i, ann_file in enumerate(annotation_files):
-            with open(ann_file, 'r') as file:
-                data = json.load(file)
-                for inst in data[0]['instances']:
-                    trackId = inst['trackId']
-                    
-                    values = inst['classValues']
-                    agent = values[0]['value']
-                    location = values[1]['value']
-                    action = values[2]['value']
-    
-                    if agent not in ignore_objects:
-                        if (agent,action,location) not in events:
-                            events[(agent,action,location)] = 0
-                        events[(agent,action,location)] += 1
-                        
-        # Sort the dictionary by the 'location' part of the key
-    sorted_events = dict(sorted(events.items(), key=lambda item: item[0][2]))
-    
-    # Print the sorted dictionary
-    for key, value in sorted_events.items():
-        print(f"{key}: {value}")
-        
+    #    for i, ann_file in enumerate(annotation_files):
+    #        with open(ann_file, 'r') as file:
+    #            data = json.load(file)
+    #            nbbox.append(len(data[0]['instances']))
+    #    print(f"Density: {np.mean(nbbox)}")
+    #    print(f"Total: {np.sum(nbbox)}")        
+    #    print('**************************************************************/n')
         
 
-    #p = argparse.ArgumentParser(description='plot the annotations')
-    #p.add_argument('video_path', type=str, help='Video Path')
-    #p.add_argument('annotations_path', type=str, help='Annotations directory')
-    #args = p.parse_args()
+    p = argparse.ArgumentParser(description='plot the annotations')
+    p.add_argument('video_path', type=str, help='Video Path')
+    p.add_argument('annotations_path', type=str, help='Annotations directory')
+    args = p.parse_args()
     
-    #plot_annotations(args.video_path, args.annotations_path, 'output.mp4')
+    plot_annotations(args.video_path, args.annotations_path, 'output.mp4')

@@ -51,11 +51,12 @@ for ann in annotations:
         elif v['obj_class'] == "Motorbike": motorbike_tracklets += 1
         tracklets_length.append(len(v['frames']))
 
+print('Tracking Benchmark Statistics:')
 print(f'Total number of vehciles: {vehciles_tracklets}')
 print(f'Total number of pedestrians: {pedestrian_tracklets}')
 print(f'Total number of motorbikes: {motorbike_tracklets}')
 print(f'Total number of cyclists: {cyclist_tracklets}')
-print(f'Mean tracklet length: {s.mean(tracklets_length)}')    
+print(f'Mean tracklet length: {s.mean(tracklets_length)} \n')    
     
 #######################################################################################################################
 
@@ -88,45 +89,36 @@ for ann in annotations:
             elif v['class'] in vehicles:
                 vehciles_pred += 1
             total += 1
-
+print('Prediction Benchmark Statistics:')
 print(f'Total number of agents: {total}')
 print(f'Total number of vehciles: {vehciles_pred}')
-print(f'Total number of pedestrians: {pedestrian_pred}')
+print(f'Total number of pedestrians: {pedestrian_pred} \n')
 
 #######################################################################################################################
 
 
 ################################## Intention statistics ################################################################
 
-annot_dir = "data/annotations/prediction_annotations"
+annot_dir = "data/annotations/intention_annotations"
 annotations = os.listdir(annot_dir)
 
-vehciles_pred = 0
-pedestrian_pred = 0
 total = 0
-
-vehicles =set([        
-    'Car', 
-    'Large_vehicle', 
-    'Medium_vehicle',
-    'Bus',
-    'Emergency_vehicle',
-    'Small_motorised_vehicle'])
 
 for ann in annotations:
     ann_file = os.path.join(annot_dir, ann) 
-    tracklets = {}
     with open(ann_file, 'r') as file:
         data = json.load(file)
         for k,v in data.items():
-            if v['class'] == 'Pedestrian':
-                pedestrian_pred += 1
-            elif v['class'] in vehicles:
-                vehciles_pred += 1
+            intentions = v['intention']
+            prev = intentions[0]
             total += 1
+            for i in range(1, len(intentions)):
+                cur = intentions[i]
+                if cur != prev:
+                    total += 1
+                    prev = cur
 
-print(f'Total number of agents: {total}')
-print(f'Total number of vehciles: {vehciles_pred}')
-print(f'Total number of pedestrians: {pedestrian_pred}')
+print('Intention Benchmark Statistics:')                    
+print(f'Total number of sequences: {total} \n')
 
 #######################################################################################################################

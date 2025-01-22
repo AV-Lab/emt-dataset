@@ -21,3 +21,6 @@ def compute_frames_idx(cap):
     keep_frames = set([offset + math.floor(n * input_fps / target_fps) for n in range(target_frames)])
     
     return keep_frames
+
+def load_meta_data(file):
+    pass
