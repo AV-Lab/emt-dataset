@@ -14,7 +14,9 @@ import numpy as np
 import json    
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
+from utils import load_meta_data
+from utils import generate_prediction_settings
+from utils import generate_intention_settings
 
 window_size = 5
 
@@ -34,11 +36,11 @@ if __name__ == '__main__':
         exit
         
     # Generate setting
-    ann_path = "../data/annotations/" if not args.annotations_path else args.annotations_path
-    prd_ann_path = "../data/annotations/prediction_annotations"
+    ann_path = "../data/annotations" if not args.annotations_path else args.annotations_path
+    prd_ann_path = ann_path + "/prediction_annotations"
     annotations = [prd_ann_path + '/' + f for f in os.listdir(prd_ann_path)]
-    generate_prediction_annotations(raw_annotations, prd_ann_path)
-    
+    splits = load_meta_data(ann_path + "/metadata.txt")
+    data_folder = generate_prediction_settings(args.past_trajectory, args.future_trajectory, splits, annotations)
     
     # Create DataLoader
     
