@@ -18,13 +18,12 @@ from utils import load_meta_data
 from utils import generate_prediction_settings
 from utils import generate_intention_settings
 
-window_size = 5
-
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description='Run predictors')
-    p.add_argument('past_trajectory', type=str, help='Past Trajectory')
-    p.add_argument('future_trajectory', type=str, help='Prediction Horizon')
+    p.add_argument('past_trajectory', type=int, help='Past Trajectory')
+    p.add_argument('future_trajectory', type=int, help='Prediction Horizon')
+    p.add_argument('--window_size', default=1, type=int, help='Sliding window')
     p.add_argument('predictor', type=str, choices=['lstm', 'gnn', 'transformer'], help='Predictor type')
     p.add_argument('setting', type=str, choices=['train', 'evaluate'], help='Execution mode (train or evaluate)')
     p.add_argument('--checkpoint', type=str, default=None, help='Path to model checkpoint file, required if mode is evaluate')
@@ -40,7 +39,7 @@ if __name__ == '__main__':
     prd_ann_path = ann_path + "/prediction_annotations"
     annotations = [prd_ann_path + '/' + f for f in os.listdir(prd_ann_path)]
     splits = load_meta_data(ann_path + "/metadata.txt")
-    data_folder = generate_prediction_settings(args.past_trajectory, args.future_trajectory, splits, annotations)
+    data_folder = generate_prediction_settings(args.past_trajectory, args.future_trajectory, splits, annotations, args.window_size)
     
     # Create DataLoader
     
