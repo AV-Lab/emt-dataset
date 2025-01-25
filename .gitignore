@@ -1,2 +1,3 @@
 emt/
 echo "visualize/output.mp4" >> .gitignore
+data/
