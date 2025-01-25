@@ -16,19 +16,27 @@
 - [Contact](#contact)
 
 ## Introduction
-EMT is a richly annotated dataset containing detailed semantic annotations for road agents and events. With 57 minutes of continuous footage, each video segment lasts between 2.5 to 3 minutes. The dataset includes heterogeneous annotations for three main agent categories: people (pedestrians and cyclists), vehicles (divided into seven classes), and traffic lights.
- 
-It captures the unique road topology and traffic conditions of the Gulf Region, offering consistent tracking IDs for all road agents. Additionally, it provides action annotations as "action tubes" and road event detections labeled as triplets (Agent, Action, Location) at the frame level.
+EMT is a comprehensive dataset for autonomous driving research, containing 57 minutes of diverse urban traffic footage from the Gulf Region. The dataset provides rich semantic annotations across two agent categories: people (pedestrians and cyclists), vehicles (seven classes). Each video segment spans 2.5-3 minutes, capturing challenging real-world scenarios:
 
-## Features
+- **Dense Urban Traffic**: Complex multi-agent interactions in congested scenarios
+- **Weather Variations**: Clear and rainy conditions
+- **Visual Challenges**: High reflections from road surfaces and adverse weather combinations (rainy nights)
+
+The dataset provides dense annotations for:
+- **Detection & Tracking**: Multi-object tracking with consistent IDs
+- **Trajectory Prediction**: Future motion paths and social interactions
+- **Intention Prediction**: Behavior understanding in complex scenarios
+
+Validated through benchmarking on state-of-the-art models across tracking, trajectory prediction, and intention prediction tasks, with corresponding ground truth annotations for each benchmark.
+
 
 ### Data Collection
 | Aspect | Description |
 |:-------|:------------|
 | Duration | 57 minutes total footage |
 | Segments | 2.5-3 minutes continuous recordings |
-| Format | 1920x1080, 30fps |
-| Storage | Uncompressed raw data |
+| FPS | 10fps for annotated frames |
+| Agent Classes | 2 Person classes and 7 Vehicle classes|
 
 ### Dataset Statistics
 | Category | Count |
