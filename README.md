@@ -73,7 +73,7 @@ python kitti_gmot.py
 ```
 ### Download Datatset
 Download Datat: 
-```
+```bash
 wget https://www.dropbox.com/scl/fi/hdcsmc7l688427k5dvslk/annotations.zip?rlkey=nh7gh6t16980nt82kd61ad2lz -O annotations.zip
 unzip annotations.zip
 ```
