@@ -27,7 +27,7 @@ It captures the unique road topology and traffic conditions of the Gulf Region, 
 |:-------|:------------|
 | Duration | 57 minutes total footage |
 | Segments | 2.5-3 minutes continuous recordings |
-| Format | 1920x1080, 30fps |
+| FPS | 10fps for annotated frames |
 | Storage | Uncompressed raw data |
 
 ### Dataset Statistics
