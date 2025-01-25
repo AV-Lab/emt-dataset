@@ -20,37 +20,35 @@ import torch
 from torch.utils.data import Dataset
 import pickle
 
-class SeqToTrajectoryDataset(Dataset):
-    def __init__(self, pickle_file_path, loading_parameters):
-        self.pickle_file_path = pickle_file_path
-        self.loading_parameters = loading_parameters
-        self.load_data()  # Load metadata if needed
+class SeqDataset(Dataset):
+    def __init__(self, data_folder, setting):
+        """
+        Args:
+            data (list): A list of [observation, target] pairs.
+                         Each element is structured as:
+                         [observation: [(x, y), ...], target: [(x, y), ...]].
+        """
+        
+        file = "{}/{}.pkl".format(data_folder, setting)
+        with open(file, 'rb') as f:
+            self.data = pickle.load(f)
 
-    def load_data(self):
-        with open(self.pickle_file_path, 'rb') as file:
-            trajectories = pickle.load(file)
-            
-        self.data = []
-        for trajectory in trajectories: 
-            if len(trajectory) == 2:
-                t = trajectory[1]['trajectory']
-            else:
-                t = trajectory['trajectory']
-                
-            offset = len(t) - self.loading_parameters['observation_length'] - self.loading_parameters['prediction_horizon']
-            num_sequences = int(offset / self.loading_parameters['sliding_window']) + 1
-            for i in range(num_sequences):
-                l = i * self.loading_parameters['sliding_window']
-                r = l + self.loading_parameters['observation_length']
-                observation = t[l:r] 
-                target = t[r:r+self.loading_parameters['prediction_horizon']]
-                if len(observation) < self.loading_parameters['observation_length']: continue
-                if len(target) < self.loading_parameters['prediction_horizon']: continue
-                self.data.append([observation, target])
-                
-        self.data_length = len(self.data)
     def __len__(self):
-        return self.data_length
+        """Returns the total number of samples in the dataset."""
+        return len(self.data)
 
     def __getitem__(self, idx):
-        return (torch.tensor(self.data[idx][0], dtype=torch.float32), torch.tensor(self.data[idx][1], dtype=torch.float32))
+        """
+        Retrieves the observation and target for a given index.
+        
+        Args:
+            idx (int): Index of the data sample.
+        
+        Returns:
+            obs_tensor (torch.Tensor): Tensor of observation coordinates.
+            target_tensor (torch.Tensor): Tensor of target coordinates.
+        """
+        observation, target = self.data[idx]
+        obs_tensor = torch.tensor(observation, dtype=torch.float32)
+        target_tensor = torch.tensor(target, dtype=torch.float32)
+        return obs_tensor, target_tensor

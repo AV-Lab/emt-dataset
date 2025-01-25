@@ -42,14 +42,10 @@ def generate_seq_setting(past_trajectory, future_trajectory, train_file, train_a
                     if len(observation) < past_trajectory: continue
                     if len(target) < future_trajectory: continue
                     trajectories.append([observation, target])
-    
-    print(len(trajectories))
-                
+                    
     with open(train_file, 'wb') as f:
         pickle.dump(trajectories, f)
-    
-    
-    
+        
     
 def compute_frames_idx(cap):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))

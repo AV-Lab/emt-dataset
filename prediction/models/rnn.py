@@ -111,7 +111,7 @@ class RNNPredictor:
             outputs = torch.cat(outputs, dim=1)
             return outputs
 
-    def __init__(self, model_parameters, loading_parameters, training_parameters, checkpoint_file=None):
+    def __init__(self, observation_length, prediction_horizon, checkpoint_file=None):
         """
         Initializes the RNNPredictor class with encoder, decoder, and training configurations.
         
@@ -121,22 +121,25 @@ class RNNPredictor:
             training_parameters (dict): Contains training configuration (e.g., num_epochs, learning_rate).
             checkpoint_file (str, optional): Path to the model checkpoint file.
         """
-        self.hidden_size = model_parameters['hidden_size']
-        self.input_size = model_parameters['state_size']
-        self.output_size = model_parameters['state_size']
-        self.input_len = loading_parameters['observation_length']
-        self.target_len = loading_parameters['prediction_horizon']
-        self.num_layers = model_parameters['num_layers']
-        self.num_epochs = training_parameters['num_epochs']
-        self.patience = training_parameters['patience']
-        self.device = training_parameters['device']
+        self.hidden_size = 128
+        self.num_layers = 2
+                
+        self.input_size = 2
+        self.output_size = 2
+        self.input_len = observation_length
+        self.target_len = prediction_horizon
+
+        self.num_epochs = 1
+        self.learning_rate = 0.001
+        self.patience = 5
+        self.device = 0
         self.best_val_loss = float('inf')
         
         encoder = self.MultiEncoder(self.input_size, self.hidden_size, self.num_layers)
         decoder = self.MultiDecoder(self.input_size, self.hidden_size, self.output_size, self.num_layers)
         self.model = self.Seq2Seq(encoder, decoder).to(self.device)
         self.criterion = nn.MSELoss().to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=training_parameters['learning_rate'])
+        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
         
         if checkpoint_file is not None:
             print('Loading weights from checkpoint')
@@ -236,7 +239,6 @@ class RNNPredictor:
             float: ADE (Average Displacement Error).
             float: FDE (Final Displacement Error).
         """
-        self.model.eval()
         ade = 0
         fde = 0
         
@@ -244,6 +246,8 @@ class RNNPredictor:
             for batch in loader:
                 inputs, targets = batch
                 outputs = self.predict(inputs.to(self.device), self.target_len)
+                
+                print(outputs)
                 ade += calculate_ade(outputs, targets.to(self.device))
                 fde += calculate_fde(outputs, targets.to(self.device))
         
@@ -270,12 +274,10 @@ class RNNPredictor:
             num_to_add = self.input_len - input_trajectory.shape[1]
             padding = zero_tensor.repeat(num_to_add, 1)
             input_trajectory = torch.cat((padding, input_trajectory), dim=0)
-        print(input_trajectory)
             
-        #self.model.eval()
-        
-        #with torch.no_grad():
-        #    return self.model(input_trajectory.to(self.device), target_len)
+        self.model.eval()
+        with torch.no_grad():
+            return self.model(input_trajectory.to(self.device), target_len)
         
         
 
