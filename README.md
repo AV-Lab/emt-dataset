@@ -16,7 +16,7 @@
 - [Contact](#contact)
 
 ## Introduction
-EMT is a richly annotated dataset containing detailed semantic annotations for road agents and events. With 57 minutes of continuous footage, each video segment lasts between 2.5 to 3 minutes. The dataset includes heterogeneous annotations for three main agent categories: people (pedestrians and cyclists), vehicles (divided into seven classes), and traffic lights.
+EMT is a richly annotated dataset containing detailed semantic annotations for road agents and events. With 57 minutes of continuous footage, each video segment lasts between 2.5 to 3 minutes. The dataset includes heterogeneous annotations for three main agent categories: people (pedestrians and cyclists), vehicles (divided into seven classes).
  
 It captures the unique road topology and traffic conditions of the Gulf Region, offering consistent tracking IDs for all road agents. Additionally, it provides action annotations as "action tubes" and road event detections labeled as triplets (Agent, Action, Location) at the frame level.
 
@@ -28,7 +28,7 @@ It captures the unique road topology and traffic conditions of the Gulf Region, 
 | Duration | 57 minutes total footage |
 | Segments | 2.5-3 minutes continuous recordings |
 | FPS | 10fps for annotated frames |
-| Storage | Uncompressed raw data |
+| Agent Classes | 2 Person classes and 7 Vehicle classes|
 
 ### Dataset Statistics
 | Category | Count |
