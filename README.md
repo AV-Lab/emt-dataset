@@ -22,7 +22,7 @@ EMT is a comprehensive dataset for autonomous driving research, containing 57 mi
 - **Weather Variations**: Clear and rainy conditions
 - **Visual Challenges**: High reflections from road surfaces and adverse weather combinations (rainy nights)
 
-The dataset provides dense annotations (every third frame) for:
+The dataset provides dense annotations for:
 - **Detection & Tracking**: Multi-object tracking with consistent IDs
 - **Trajectory Prediction**: Future motion paths and social interactions
 - **Intention Prediction**: Behavior understanding in complex scenarios
