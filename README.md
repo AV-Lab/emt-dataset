@@ -16,7 +16,7 @@
 - [Contact](#contact)
 
 ## Introduction
-EMT is a comprehensive dataset for autonomous driving research, containing 57 minutes of diverse urban traffic footage from the Gulf Region. The dataset provides rich semantic annotations across three agent categories: people (pedestrians and cyclists), vehicles (seven classes), and traffic lights. Each video segment spans 2.5-3 minutes, capturing challenging real-world scenarios:
+EMT is a comprehensive dataset for autonomous driving research, containing 57 minutes of diverse urban traffic footage from the Gulf Region. The dataset provides rich semantic annotations across two agent categories: people (pedestrians and cyclists), vehicles (seven classes). Each video segment spans 2.5-3 minutes, capturing challenging real-world scenarios:
 
 - **Dense Urban Traffic**: Complex multi-agent interactions in congested scenarios
 - **Weather Variations**: Clear and rainy conditions
