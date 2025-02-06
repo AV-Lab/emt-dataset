@@ -1,0 +1,11 @@
+# python==3.10.9
+torch==1.12.1
+matplotlib==3.7.0 
+tqdm==4.64.1
+numpy==1.23.5
+scikit-learn==1.2.2
+scipy==1.10.1
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
+# pandas==1.5.3
+# torchsummary

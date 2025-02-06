@@ -6,7 +6,44 @@ import matplotlib as plt
 import numpy as np
 import scipy.spatial
 import scipy.io
+import matplotlib.pyplot as plt
+# from utils.utils import generate_square_mask
+from evaluation.distance_metrics import calculate_ade,calculate_fde
 
+def generate_square_mask(dim_trg: int, dim_src: int, mask_type: str) -> torch.Tensor:
+    """
+    Generate a square mask for transformer attention mechanisms.
+    
+    Args:
+        dim_trg (int): Target sequence length.
+        dim_src (int): Source sequence length.
+        mask_type (str): Type of mask to generate. Can be "src", "tgt", or "memory".
+    
+    Returns:
+        torch.Tensor: A mask tensor with `-inf` values to block specific positions.
+    """
+
+    # Initialize a square matrix filled with -inf (default to a fully masked state)
+    mask = torch.ones(dim_trg, dim_trg) * float('-inf')
+
+    if mask_type == "src":
+        # Source mask (self-attention in the encoder)
+        # Creates an upper triangular matrix with -inf above the diagonal
+        # This allows each token to attend to itself and previous tokens
+        mask = torch.triu(mask, diagonal=1)
+
+    elif mask_type == "tgt":
+        # Target mask (self-attention in the decoder)
+        # Prevents the decoder from attending to future tokens (causal mask)
+        mask = torch.triu(mask, diagonal=1)
+
+    elif mask_type == "memory":
+        # Memory mask (cross-attention between encoder and decoder)
+        # Controls which encoder outputs the decoder can attend to
+        mask = torch.ones(dim_trg, dim_src) * float('-inf')
+        mask = torch.triu(mask, diagonal=1)  # Prevents attending to future positions
+
+    return mask
 
 
 
@@ -53,53 +90,6 @@ class ScheduledOptim():
             param_group['lr'] = lr
 
 
-
-def generate_square_mask(dim_trg: int, dim_src: int, mask_type: str) -> torch.Tensor:
-    """
-    Generate a square mask for transformer attention mechanisms.
-    
-    Args:
-        dim_trg (int): Target sequence length.
-        dim_src (int): Source sequence length.
-        mask_type (str): Type of mask to generate. Can be "src", "tgt", or "memory".
-    
-    Returns:
-        torch.Tensor: A mask tensor with `-inf` values to block specific positions.
-    """
-
-    # Initialize a square matrix filled with -inf (default to a fully masked state)
-    mask = torch.ones(dim_trg, dim_trg) * float('-inf')
-
-    if mask_type == "src":
-        # Source mask (self-attention in the encoder)
-        # Creates an upper triangular matrix with -inf above the diagonal
-        # This allows each token to attend to itself and previous tokens
-        mask = torch.triu(mask, diagonal=1)
-
-    elif mask_type == "tgt":
-        # Target mask (self-attention in the decoder)
-        # Prevents the decoder from attending to future tokens (causal mask)
-        mask = torch.triu(mask, diagonal=1)
-
-    elif mask_type == "memory":
-        # Memory mask (cross-attention between encoder and decoder)
-        # Controls which encoder outputs the decoder can attend to
-        mask = torch.ones(dim_trg, dim_src) * float('-inf')
-        mask = torch.triu(mask, diagonal=1)  # Prevents attending to future positions
-
-    return mask
-def distance_metrics(gt,preds,dim_3=False):
-    errors = np.zeros(gt.shape[:-1])
-    if dim_3:
-        for i in range(errors.shape[0]):
-            for j in range(errors.shape[1]):
-                for k in range(errors.shape[2]):
-                    errors[i, j, k] = scipy.spatial.distance.euclidean(gt[i, j , k], preds[i, j,k])
-        return errors.mean(),errors[:,:,-1].mean(),errors
-    for i in range(errors.shape[0]):
-        for j in range(errors.shape[1]):
-            errors[i, j] = scipy.spatial.distance.euclidean(gt[i, j], preds[i, j])
-    return errors.mean(),errors[:,-1].mean(),errors
 def calculate_metrics(pred, target, obs_last_pos, normalized, mean, std, device):
     """
     Calculate ADE and FDE for predictions
@@ -118,10 +108,15 @@ def calculate_metrics(pred, target, obs_last_pos, normalized, mean, std, device)
     pred_pos = pred.cpu().numpy().cumsum(1) + obs_last_pos.cpu().numpy()
     target_pos = target.cpu().numpy().cumsum(1) + obs_last_pos.cpu().numpy()
     
-    # Calculate metrics
-    mad, fad, _ = distance_metrics(target_pos, pred_pos)
+    # print(pred_pos, target_pos)dddd
+
+    # Calculate metrics change to list from numpy array
+
+    ade = calculate_ade(pred_pos, target_pos.tolist())
+    fde = calculate_fde(pred_pos, target_pos.tolist())
+    # mad, fad, _ = distance_metrics(target_pos, pred_pos)
     
-    return mad, fad
+    return ade, fde
 
 def train_attn(args, train_dl, test_dl, model=None, optim=None, epochs=100, 
                mean=torch.tensor([0.0, 0.0, 0.0, 0.0]), 
@@ -158,17 +153,25 @@ def train_attn(args, train_dl, test_dl, model=None, optim=None, epochs=100,
             target_tensor = target_tensor.to(args.device)
 
             input = (obs_tensor[:,1:,2:4] - mean[2:])/std[2:]
-            target = (target_tensor[:,1:,2:4] - mean[2:])/std[2:]
+            updated_enq_length = input.shape[1]
+            target = (target_tensor[:,:,2:4] - mean[2:])/std[2:]
 
             tgt = torch.zeros_like(target).to(args.device)  
             tgt[:, 1:, :] = target[:, :-1, :] 
 
             tgt_mask = generate_square_mask(dim_trg=dec_seq_len, 
-                                          dim_src=enc_seq_len, 
+                                          dim_src=updated_enq_length, 
                                           mask_type="tgt").to(args.device)
+            
+            memory_mask = generate_square_mask(
+                dim_trg=dec_seq_len,  # = 10
+                dim_src=updated_enq_length,   # = 9
+                mask_type="memory"
+            ).to(args.device)
+
 
             optim.zero_grad()
-            pred = model(input, tgt, tgt_mask=tgt_mask)
+            pred = model(input, tgt,tgt_mask=tgt_mask)
 
             # Loss on normalized values
             train_loss = criterion(pred, target)
@@ -211,13 +214,14 @@ def train_attn(args, train_dl, test_dl, model=None, optim=None, epochs=100,
                 target_tensor = target_tensor.to(args.device)
 
                 input = (obs_tensor[:,1:,2:4] - mean[2:])/std[2:]
-                target = (target_tensor[:,1:,2:4] - mean[2:])/std[2:]
+                updated_enq_length = input.shape[1]
+                target = (target_tensor[:,:,2:4] - mean[2:])/std[2:]
 
                 tgt = torch.zeros_like(target).to(args.device)
                 tgt[:, 1:, :] = target[:, :-1, :]
 
                 tgt_mask = generate_square_mask(dim_trg=dec_seq_len, 
-                                              dim_src=enc_seq_len, 
+                                              dim_src=updated_enq_length, 
                                               mask_type="tgt").to(args.device)
 
                 pred = model(input, tgt, tgt_mask=tgt_mask)

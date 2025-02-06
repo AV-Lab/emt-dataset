@@ -12,6 +12,11 @@ import pickle
 import os
 import shutil 
 import json
+import numpy as np
+import random
+import torch.nn as nn
+from torch import Tensor
+import torch
 
 prediction_horizon = 1
 
@@ -96,3 +101,43 @@ def generate_prediction_settings(past_trajectory, future_trajectory, splits, ann
     
 def generate_intention_settings():
     pass
+
+
+
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model: int, dropout: float = 0.0, max_len: int = 5000, batch_first: bool=True):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        self.batch_first = batch_first
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        if batch_first: 
+            pe = torch.zeros(1,max_len, d_model)
+            pe[0,:, 0::2] = torch.sin(position * div_term)
+            pe[0,:, 1::2] = torch.cos(position * div_term)
+        else: 
+            pe = torch.zeros(max_len, 1, d_model)
+            pe[:, 0, 0::2] = torch.sin(position * div_term)
+            pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Args:
+            x: Tensor, shape [seq_len, batch_size, embedding_dim] 
+            x: Tensor, shape [batch_size, seq_len, embedding_dim]batch first
+        """
+        #print("pe[:,:x.size(1),:] shape: ",self.pe.shape)
+        x = x + self.pe[:,:x.size(1),:] if self.batch_first else x + self.pe[:x.size(0)]
+
+        return self.dropout(x)
+
+def set_seeds(seed=42):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    print(f"Setting seeds: {seed}")
