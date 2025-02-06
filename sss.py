@@ -100,21 +100,23 @@ if __name__ == '__main__':
     # Train Predictor
     if args.predictor=='transformer':
         # # Initialize model
-        # transformer = AttentionEMT(max_length=max(args.past_trajectory, args.future_trajectory)).to(args.device)
-        # # Train the model
-        # model, history = transformer.train_model(args=args,train_dl=train_dataloader,test_dl=test_dataloader,epochs=50,mean=train_mean,std=train_std,verbose=True)
-        # transformer = AttentionEMT(
-        #     in_features=2,
-        #     out_features=2,
-        #     num_heads=2,
-        #     num_encoder_layers=3,
-        #     num_decoder_layers=3,
-        #     embedding_size=128,
-        #     dropout=0.2,
-        #     max_length=max(args.past_trajectory, args.future_trajectory),
-        #     batch_first=True,
-        #     actn="gelu",
-        # ).to(args.device)
+        transformer = AttentionEMT(max_length=max(args.past_trajectory, args.future_trajectory)).to(args.device)
+
+        transformer = AttentionEMT(
+            in_features=2,
+            out_features=2,
+            num_heads=2,
+            num_encoder_layers=3,
+            num_decoder_layers=3,
+            embedding_size=128,
+            dropout=0.1,
+            max_length=max(args.past_trajectory, args.future_trajectory),
+            batch_first=True,
+            actn="gelu",
+        ).to(args.device)
+        
+        # Train the model
+        model, history = transformer.train_model(args=args,train_dl=train_dataloader,test_dl=test_dataloader,epochs=50,mean=train_mean,std=train_std,verbose=True)
 
         # # Train the model
         # model, history = transformer.train_model(
@@ -127,73 +129,73 @@ if __name__ == '__main__':
         #     verbose=True
         # )
         # Initialize model
-        transformer_model = Attention_EMT(
-            in_features = 2,
-            out_features = 2,
-            num_heads = 2,
-            num_encoder_layers = 3,
-            num_decoder_layers = 3,
-            embedding_size = 128,
-            dropout = 0.1,
-            max_length = max(args.past_trajectory, args.future_trajectory),
-            batch_first=True,
-            actn="gelu",
-            device = args.device
-        ).to(args.device)  # Move model to device
+        # transformer_model = Attention_EMT(
+        #     in_features = 2,
+        #     out_features = 2,
+        #     num_heads = 2,
+        #     num_encoder_layers = 3,
+        #     num_decoder_layers = 3,
+        #     embedding_size = 128,
+        #     dropout = 0.1,
+        #     max_length = max(args.past_trajectory, args.future_trajectory),
+        #     batch_first=True,
+        #     actn="gelu",
+        #     device = args.device
+        # ).to(args.device)  # Move model to device
         
 
-        # Setup optimizer parameters
-        args.lr_mul = 0.1
-        args.d_model = 128  # Should match embedding_size
-        args.n_warmup_steps = 3500
+        # # Setup optimizer parameters
+        # args.lr_mul = 0.1
+        # args.d_model = 128  # Should match embedding_size
+        # args.n_warmup_steps = 3500
         
-        # Define the optimizer
-        optimizer = ScheduledOptim(
-            torch.optim.Adam(transformer_model.parameters(), betas=(0.9, 0.98), eps=1e-09),
-            args.lr_mul, 
-            args.d_model, 
-            args.n_warmup_steps
-        )
+        # # Define the optimizer
+        # optimizer = ScheduledOptim(
+        #     torch.optim.Adam(transformer_model.parameters(), betas=(0.9, 0.98), eps=1e-09),
+        #     args.lr_mul, 
+        #     args.d_model, 
+        #     args.n_warmup_steps
+        # )
 
-        # Train model
-        trained_model, history = train_attn(
-            args=args,
-            train_dl=train_dataloader,
-            test_dl=test_dataloader,
-            model=transformer_model,  # Pass the model
-            optim=optimizer,         # Pass the optimizer
-            mean=train_mean,
-            std=train_std,
-            epochs=int(args.epochs) if hasattr(args, 'epochs') else 2  # Add epochs parameter
-        )
+        # # Train model
+        # trained_model, history = train_attn(
+        #     args=args,
+        #     train_dl=train_dataloader,
+        #     test_dl=test_dataloader,
+        #     model=transformer_model,  # Pass the model
+        #     optim=optimizer,         # Pass the optimizer
+        #     mean=train_mean,
+        #     std=train_std,
+        #     epochs=int(args.epochs) if hasattr(args, 'epochs') else 2  # Add epochs parameter
+        # )
 
-        # Save model
-        # First move model to CPU
-        model_cpu = trained_model.to('cpu')
+        # # Save model
+        # # First move model to CPU
+        # model_cpu = trained_model.to('cpu')
 
-        # Create model state dictionary excluding device info
-        model_state = {
-            'model_state_dict': model_cpu.state_dict(),
-            # 'optimizer_state_dict': optimizer.state_dict(),
-            'training_history': history,
-            'train_mean': train_mean,
-            'train_std': train_std,
-            'model_config': {
-                'in_features': 2,
-                'out_features': 2,
-                'num_heads': 2,
-                'num_encoder_layers': 3,
-                'num_decoder_layers': 3,
-                'embedding_size': 128,
-                'dropout': 0.1,
-                'max_length': max(args.past_trajectory, args.future_trajectory),
-                'batch_first': True,
-                'actn': "gelu"
-            }
-        }
+        # # Create model state dictionary excluding device info
+        # model_state = {
+        #     'model_state_dict': model_cpu.state_dict(),
+        #     # 'optimizer_state_dict': optimizer.state_dict(),
+        #     'training_history': history,
+        #     'train_mean': train_mean,
+        #     'train_std': train_std,
+        #     'model_config': {
+        #         'in_features': 2,
+        #         'out_features': 2,
+        #         'num_heads': 2,
+        #         'num_encoder_layers': 3,
+        #         'num_decoder_layers': 3,
+        #         'embedding_size': 128,
+        #         'dropout': 0.1,
+        #         'max_length': max(args.past_trajectory, args.future_trajectory),
+        #         'batch_first': True,
+        #         'actn': "gelu"
+        #     }
+        # }
 
-        # Save the model
-        torch.save(model_state,'prediction/pre_trained/' +str(args.batch_size) + '_'+ args.checkpoint)
+        # # Save the model
+        # torch.save(model_state,'prediction/pre_trained/' +str(args.batch_size) + '_'+ args.checkpoint)
 
     
     # # Train Predictor 

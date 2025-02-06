@@ -24,7 +24,7 @@ from evaluation.distance_metrics import calculate_ade, calculate_fde
 from dataloaders.seq_loader import SeqDataset
 
 from models.rnn import RNNPredictor
-from models.transformer_model import Attention_EMT
+from models.transformer_model import Attention_EMT,AttentionEMT
 import torch
 import torch.nn as nn
 
@@ -61,7 +61,7 @@ if __name__ == '__main__':
         print("No checkpoint provided")
         exit
     elif args.setting == "train" and not args.checkpoint:
-        args.checkpoint = f'transformer_model_{args.past_trajectory}_{args.future_trajectory}.pth'
+        args.checkpoint = f'transformer_P_{args.past_trajectory}_F_{args.future_trajectory}_W_{args.window_size}.pth'
     if args.device == "cuda" and not cuda.is_available():
         args.device = "cpu"
         print("Could not find GPU. Using CPU instead!")
@@ -97,9 +97,9 @@ if __name__ == '__main__':
         include_velocity = False
         
     tain_dataset = SeqDataset(data_folder,"train",include_velocity)
-    train_loader = DataLoader(tain_dataset, batch_size=args.batch_size, shuffle=True,num_workers=args.num_workers)
+    train_dataloader = DataLoader(tain_dataset, batch_size=args.batch_size, shuffle=True,num_workers=args.num_workers)
     test_datatset = SeqDataset(data_folder, "test",include_velocity)
-    test_loader = DataLoader(test_datatset, batch_size=args.batch_size, shuffle=False,num_workers=args.num_workers)
+    test_dataloader = DataLoader(test_datatset, batch_size=args.batch_size, shuffle=False,num_workers=args.num_workers)
 
 
     # get mean and standard deviation
@@ -111,6 +111,30 @@ if __name__ == '__main__':
     if args.predictor=='transformer':
         max_timestep_len  =  max(args.past_trajectory, args.future_trajectory)
         # Initialize model
+        # set_seeds(42)  # Reset seeds
+        # All parameters are the same as ModelConfig defaults except max_length
+        transformer = AttentionEMT(
+            max_length=max_timestep_len,
+            device=args.device
+        ).to(args.device)
+
+        # # Initialize weights
+        # for p in transformer.parameters():
+        #     if p.dim() > 1:
+        #         nn.init.xavier_uniform_(p)
+        # # # Initialize weights
+        # # for p in transformer.parameters():
+        # #     if p.dim() > 1:
+        # #         nn.init.xavier_uniform_(p)
+
+        # Initialize weights
+        for p in transformer.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+        models, historys = transformer.train_model(args=args,train_dl=train_dataloader,test_dl=test_dataloader,epochs=1,mean=train_mean,std=train_std,verbose=True)
+        
+        # # Initialize model
+        set_seeds(42)  # Reset seeds
         transformer_model = Attention_EMT(
             in_features = 2,
             out_features = 2,
@@ -146,8 +170,8 @@ if __name__ == '__main__':
         # Train model
         trained_model, history = train_attn(
             args=args,
-            train_dl=train_loader,
-            test_dl=test_loader,
+            train_dl=train_dataloader,
+            test_dl=test_dataloader,
             model=transformer_model,  # Pass the model
             optim=optimizer,         # Pass the optimizer
             mean=train_mean,
@@ -155,33 +179,33 @@ if __name__ == '__main__':
             epochs=int(args.epochs) if hasattr(args, 'epochs') else 2  # Add epochs parameter
         )
 
-        # Save model
-        # First move model to CPU
-        model_cpu = trained_model.to('cpu')
+        # # Save model
+        # # First move model to CPU
+        # model_cpu = trained_model.to('cpu')
 
-        # Create model state dictionary excluding device info
-        model_state = {
-            'model_state_dict': model_cpu.state_dict(),
-            # 'optimizer_state_dict': optimizer.state_dict(),
-            'training_history': history,
-            'train_mean': train_mean,
-            'train_std': train_std,
-            'model_config': {
-                'in_features': 2,
-                'out_features': 2,
-                'num_heads': 2,
-                'num_encoder_layers': 3,
-                'num_decoder_layers': 3,
-                'embedding_size': 128,
-                'dropout': 0.1,
-                'max_length': max_timestep_len,
-                'batch_first': True,
-                'actn': "gelu"
-            }
-        }
+        # # Create model state dictionary excluding device info
+        # model_state = {
+        #     'model_state_dict': model_cpu.state_dict(),
+        #     # 'optimizer_state_dict': optimizer.state_dict(),
+        #     'training_history': history,
+        #     'train_mean': train_mean,
+        #     'train_std': train_std,
+        #     'model_config': {
+        #         'in_features': 2,
+        #         'out_features': 2,
+        #         'num_heads': 2,
+        #         'num_encoder_layers': 3,
+        #         'num_decoder_layers': 3,
+        #         'embedding_size': 128,
+        #         'dropout': 0.1,
+        #         'max_length': max_timestep_len,
+        #         'batch_first': True,
+        #         'actn': "gelu"
+        #     }
+        # }
 
-        # Save the model
-        torch.save(model_state,'prediction/pre_trained/' +str(args.batch_size) + '_'+ args.checkpoint)
+        # # Save the model
+        # torch.save(model_state,'prediction/pre_trained/' +str(args.batch_size) + '_'+ args.checkpoint)
 
     
     # # Train Predictor 

@@ -9,10 +9,11 @@ from torch.autograd import Variable # storing data while learning
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
-from typing import Tuple, Dict, Optional, List, Union
+from typing import Tuple, Dict, Optional, List, Union,Any
 from dataclasses import dataclass, asdict
 from evaluation.distance_metrics import calculate_ade,calculate_fde
 from utils import set_seeds
+from tqdm import tqdm
 import os
 
 class PositionalEncoding(nn.Module):
@@ -227,8 +228,17 @@ class ModelConfig:
     n_warmup_steps: int = 3500
     optimizer_betas: Tuple[float, float] = (0.9, 0.98)
     optimizer_eps: float = 1e-9
+    # Device parameter (can be None)
+    device: Optional[torch.device] = None
+
     
-    def to_dict(self) -> Dict[str, any]:
+    def get_device(self) -> torch.device:
+        """Get the device to use. If not provided, use cuda if available else cpu."""
+        if self.device is not None:
+            return self.device
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary."""
         return asdict(self)
     
@@ -257,11 +267,19 @@ class AttentionEMT(nn.Module):
         super().__init__()
 
         # Use provided config or create from kwargs
-        self.config = config or ModelConfig(**kwargs)
-        set_seeds(42)
+        # self.config = config or ModelConfig(**kwargs)
+
+        # Create config object first
+        if config is None:
+            self.config = ModelConfig(**kwargs)  # Create from kwargs, using defaults for unspecified params
+        else:
+            self.config = config
+
+        print(self.config)
+
         
         # Store model parameters
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #self.config.get_device # Uses either provided device or default
         self.num_heads = self.config.num_heads
         self.max_len = self.config.max_length
         self.d_model = self.config.embedding_size
@@ -325,7 +343,8 @@ class AttentionEMT(nn.Module):
         self.output_layer = nn.Linear(self.d_model, self.output_features)
         
         # Initialize weights using Xavier uniform initialization
-        self._init_weights()
+        # self._init_weights()
+       
     
     def _init_weights(self):
         """Initialize the model weights using Xavier uniform initialization."""
@@ -422,6 +441,7 @@ class AttentionEMT(nn.Module):
         """
         Train the model with metrics tracking and visualization.
         """
+        # self._init_weights()
         # Setup optimizer with model's configuration
         optimizer = self.configure_optimizer(
             lr_mul=self.lr_mul,
@@ -429,7 +449,6 @@ class AttentionEMT(nn.Module):
             optimizer_betas=self.optimizer_betas,
             optimizer_eps=self.optimizer_eps
         )
-        
         if verbose:
             print('Training Settings:')
             print(f"Train batch size: {args.batch_size}")
