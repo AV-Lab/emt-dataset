@@ -24,7 +24,7 @@ from evaluation.distance_metrics import calculate_ade, calculate_fde
 from dataloaders.seq_loader import SeqDataset
 
 from models.rnn import RNNPredictor
-from models.transformer_model import Attention_EMT,AttentionEMT
+from models.transformer import Attention_EMT,AttentionEMT
 import torch
 import torch.nn as nn
 
@@ -38,7 +38,7 @@ def set_seeds(seed=42):
     np.random.seed(seed)
     random.seed(seed)
     torch.backends.cudnn.deterministic = True
-    print(f"Setting seeds: {seed}")
+    # print(f"Setting seeds: {seed}")
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description='Run predictors')
@@ -53,6 +53,7 @@ if __name__ == '__main__':
     p.add_argument('--num_workers', type=int, default=8, help='Number of workers for dataloader')
     p.add_argument('--batch_size', type=int, default=32, help='Batch size')
     p.add_argument('--device', type=str, default='cuda', help='device to run the model',choices=['cuda', 'cpu'])
+    p.add_argument('--seed', type=int, default=42, help='Seed for reproducibility -> set zero for random seed generation')
 
     args = p.parse_args()
    
@@ -69,19 +70,18 @@ if __name__ == '__main__':
     
 
     # Print all arguments
-    print("\nRunning with the following parameters:")
     for arg in vars(args):
-        print(f"{arg:20s}: {getattr(args, arg)}")    
+        if arg == "seed" and int(getattr(args, arg)) == 0:
+            print(f"{arg:20s}: seed not selected (random selection)")
+        else:
+            print(f"{arg:20s}: {getattr(args, arg)}")
+
+
+    # set seed for deterministic training -> # if seed is zero then don't set seed
+    if int(args.seed)>0: 
+        set_seeds(int(args.seed))
+
     
-    set_seeds(seed = 42)
-    # Print PyTorch seed (PyTorch does not have a direct getter, so we set & get manually)
-    torch_seed = torch.initial_seed()
-    print(f"PyTorch Seed: {torch_seed}")
-
-    # Print NumPy seed (NumPy does not provide a direct getter, so we generate a random number)
-    np_random_state = np.random.get_state()
-    print(f"NumPy Seed: {np_random_state[1][0]}")
-
     # Generate setting
     ann_path = "../data/annotations" if not args.annotations_path else args.annotations_path
     prd_ann_path = ann_path + "/prediction_annotations"
@@ -102,111 +102,25 @@ if __name__ == '__main__':
     test_dataloader = DataLoader(test_datatset, batch_size=args.batch_size, shuffle=False,num_workers=args.num_workers)
 
 
+
     # get mean and standard deviation
     train_mean,train_std = tain_dataset.mean,tain_dataset.std
+    max_timestep_len  =  max(args.past_trajectory, args.future_trajectory)
    
 
 
     # Train Predictor
     if args.predictor=='transformer':
-        max_timestep_len  =  max(args.past_trajectory, args.future_trajectory)
-        # Initialize model
-        # set_seeds(42)  # Reset seeds
-        # All parameters are the same as ModelConfig defaults except max_length
+        # Initialize model - > All parameters are the same as ModelConfig defaults except max_length
         transformer = AttentionEMT(
             max_length=max_timestep_len,
             device=args.device
         ).to(args.device)
 
-        # # Initialize weights
-        # for p in transformer.parameters():
-        #     if p.dim() > 1:
-        #         nn.init.xavier_uniform_(p)
-        # # # Initialize weights
-        # # for p in transformer.parameters():
-        # #     if p.dim() > 1:
-        # #         nn.init.xavier_uniform_(p)
+        transformer.train_model(args,train_dl=train_dataloader ,test_dl=test_dataloader,epochs=int(args.epochs),mean=train_mean,std=train_std)
 
-        # Initialize weights
-        for p in transformer.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
-        models, historys = transformer.train_model(args=args,train_dl=train_dataloader,test_dl=test_dataloader,epochs=1,mean=train_mean,std=train_std,verbose=True)
         
-        # # Initialize model
-        set_seeds(42)  # Reset seeds
-        transformer_model = Attention_EMT(
-            in_features = 2,
-            out_features = 2,
-            num_heads = 2,
-            num_encoder_layers = 3,
-            num_decoder_layers = 3,
-            embedding_size = 128,
-            dropout = 0.2,
-            max_length = max_timestep_len,
-            batch_first=True,
-            actn="gelu",
-            device = args.device
-        ).to(args.device)  # Move model to device
-        
-        # Initialize weights
-        for p in transformer_model.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
-        
-        # Setup optimizer parameters
-        args.lr_mul = 0.1
-        args.d_model = 128  # Should match embedding_size
-        args.n_warmup_steps = 3500
-        
-        # Define the optimizer
-        optimizer = ScheduledOptim(
-            torch.optim.Adam(transformer_model.parameters(), betas=(0.9, 0.98), eps=1e-09),
-            args.lr_mul, 
-            args.d_model, 
-            args.n_warmup_steps
-        )
-
-        # Train model
-        trained_model, history = train_attn(
-            args=args,
-            train_dl=train_dataloader,
-            test_dl=test_dataloader,
-            model=transformer_model,  # Pass the model
-            optim=optimizer,         # Pass the optimizer
-            mean=train_mean,
-            std=train_std,
-            epochs=int(args.epochs) if hasattr(args, 'epochs') else 2  # Add epochs parameter
-        )
-
-        # # Save model
-        # # First move model to CPU
-        # model_cpu = trained_model.to('cpu')
-
-        # # Create model state dictionary excluding device info
-        # model_state = {
-        #     'model_state_dict': model_cpu.state_dict(),
-        #     # 'optimizer_state_dict': optimizer.state_dict(),
-        #     'training_history': history,
-        #     'train_mean': train_mean,
-        #     'train_std': train_std,
-        #     'model_config': {
-        #         'in_features': 2,
-        #         'out_features': 2,
-        #         'num_heads': 2,
-        #         'num_encoder_layers': 3,
-        #         'num_decoder_layers': 3,
-        #         'embedding_size': 128,
-        #         'dropout': 0.1,
-        #         'max_length': max_timestep_len,
-        #         'batch_first': True,
-        #         'actn': "gelu"
-        #     }
-        # }
-
-        # # Save the model
-        # torch.save(model_state,'prediction/pre_trained/' +str(args.batch_size) + '_'+ args.checkpoint)
-
+ 
     
     # # Train Predictor 
     # predictor = RNNPredictor(args.past_trajectory, args.future_trajectory)
