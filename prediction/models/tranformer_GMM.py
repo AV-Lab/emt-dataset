@@ -165,6 +165,12 @@ class Attention_EMT(nn.Module):
 
         return  output
 
+
+
+'''
+A wrapper class for scheduled optimizer 
+source: https://github.com/jadore801120/attention-is-all-you-need-pytorch/blob/master/transformer/Optim.py
+'''
 class ScheduledOptim():
     '''A simple wrapper class for learning rate scheduling'''
 
@@ -217,6 +223,11 @@ class ModelConfig:
     max_length: int = 12
     batch_first: bool = True
     actn: str = "gelu"
+
+    #GMM parameters
+    n_gaussians: int = 5
+    n_hidden : int = 10
+
     # Optimizer parameters
     lr_mul: float = 0.1
     n_warmup_steps: int = 3500
@@ -224,49 +235,6 @@ class ModelConfig:
     optimizer_eps: float = 1e-9
     # Device parameter (can be None)
     device: Optional[torch.device] = None
-
-    def display_config(self, verbose: bool = False) -> None:
-        """
-        Pretty print the model configuration.
-        
-        Args:
-            verbose (bool): If True, prints additional information and formatting
-        """
-        if verbose:
-            print("\n" + "="*50)
-            print("AttentionEMT Model Configuration")
-            print("="*50)
-            
-            print("\nModel Architecture:")
-            print("-"*20)
-            print(f"Input Features:      {self.in_features}")
-            print(f"Output Features:     {self.out_features}")
-            print(f"Number of Heads:     {self.num_heads}")
-            print(f"Encoder Layers:      {self.num_encoder_layers}")
-            print(f"Decoder Layers:      {self.num_decoder_layers}")
-            print(f"Embedding Size:      {self.embedding_size}")
-            print(f"Dropout Rate:        {self.dropout}")
-            print(f"Max Sequence Length: {self.max_length}")
-            print(f"Batch First:         {self.batch_first}")
-            print(f"Activation Function: {self.actn}")
-            
-            print("\nOptimizer Settings:")
-            print("-"*20)
-            print(f"Learning Rate Multiplier: {self.lr_mul}")
-            print(f"Warmup Steps:            {self.n_warmup_steps}")
-            print(f"Optimizer Betas:         {self.optimizer_betas}")
-            print(f"Optimizer Epsilon:       {self.optimizer_eps}")
-            
-            print("\nDevice Configuration:")
-            print("-"*20)
-            print(f"Device: {self.get_device()}")
-            print("\n" + "="*50)
-        else:
-            # Simple print of key parameters
-            print(f"AttentionEMT Config: in_features={self.in_features}, "
-                  f"out_features={self.out_features}, num_heads={self.num_heads}, "
-                  f"embedding_size={self.embedding_size}, dropout={self.dropout}")
-
 
     
     def get_device(self) -> torch.device:
@@ -311,7 +279,8 @@ class AttentionEMT(nn.Module):
             self.config = ModelConfig(**kwargs)  # Create from kwargs, using defaults for unspecified params
         else:
             self.config = config
-    
+
+        print(self.config)
 
         
         # Store model parameters
@@ -327,6 +296,10 @@ class AttentionEMT(nn.Module):
         self.n_warmup_steps = self.config.n_warmup_steps
         self.optimizer_betas = self.config.optimizer_betas
         self.optimizer_eps = self.config.optimizer_eps
+
+
+        self.gaussians =  self.config.n_gaussians
+        self.hidden = self.config.n_hidden
         
         # Define dropout rates
         self.dropout_encoder = self.config.dropout
@@ -377,6 +350,47 @@ class AttentionEMT(nn.Module):
         
         # Output projection layer
         self.output_layer = nn.Linear(self.d_model, self.output_features)
+
+
+        self.embedding_sigma = nn.Sequential(
+        nn.Linear(self.d_model,self.hidden),
+        nn.ELU(),#nn.GELU(),#nn.LeakyReLU(), #nn.GELU(),#nn.ReLU(),
+        nn.Linear(self.hidden,self.hidden//2),
+        nn.ELU(),
+        nn.Linear(self.hidden//2,self.hidden//4),
+        nn.ELU()#nn.GELU(),#nn.LeakyReLU(),#nn.GELU(),#nn.ReLU(),
+        )
+        self.embedding_mue = nn.Sequential(
+        nn.Linear(self.d_model,self.hidden),
+        nn.ELU(),#nn.GELU(),#nn.LeakyReLU(), #nn.GELU(),#nn.ReLU(),
+        nn.Linear(self.hidden,self.hidden//2),
+        nn.ELU(),
+        nn.Linear(self.hidden//2,self.hidden//4),
+        nn.ELU()#nn.GELU(),#nn.LeakyReLU(),#nn.GELU(),#nn.ReLU(),
+        )
+
+        self.pis = nn.Sequential(
+        nn.Linear(self.d_model,self.hidden),
+        nn.ELU(),
+        nn.Linear(self.hidden,self.hidden//2),
+        nn.ELU(),#nn.GELU(),#nn.LeakyReLU(), #nn.GELU(),#nn.ReLU(),
+        nn.Linear(self.hidden//2,self.hidden//4),
+        nn.ELU(),
+        nn.Linear(self.hidden//4,self.gaussians)
+        #nn.Softmax()
+        )
+
+        
+        self.hidden_hid = self.hidden//4
+        # self.pis = nn.Linear(self.hidden_hid,self.gaussians).to(device)
+        self.sigma_x = nn.Linear(self.hidden_hid, self.gaussians)
+        self.sigma_y = nn.Linear(self.hidden_hid, self.gaussians)
+        self.mu_x = nn.Linear(self.hidden_hid, self.gaussians)
+        self.mu_y = nn.Linear(self.hidden_hid, self.gaussians)
+
+        
+        # Initialize weights using Xavier uniform initialization
+        # self._init_weights()
        
     
     def _init_weights(self):
@@ -468,17 +482,13 @@ class AttentionEMT(nn.Module):
         verbose: bool = True,
         save_path: str = 'prediction/results',
         save_model: bool = True,
-        save_frequency: int = 10
+        save_frequency: int = 10,
         # checkpoint_name: str = 'model.pt'
     ) -> Tuple[nn.Module, Dict]:
         """
         Train the model with metrics tracking and visualization.
         """
-        # Initialize weights using Xavier uniform initialization
-        self._init_weights()
-
-        #  if verbose print config:
-        self.config.display_config(verbose)
+        # self._init_weights()
         # Setup optimizer with model's configuration
         optimizer = self.configure_optimizer(
             lr_mul=self.lr_mul,
@@ -486,6 +496,10 @@ class AttentionEMT(nn.Module):
             optimizer_betas=self.optimizer_betas,
             optimizer_eps=self.optimizer_eps
         )
+        if verbose:
+            print('Training Settings:')
+            print(f"Train batch size: {args.batch_size}")
+            print(f"Epochs: {epochs}")
 
         mean = mean.to(args.device)
         std = std.to(args.device)
@@ -596,30 +610,16 @@ class AttentionEMT(nn.Module):
                     updated_enq_length = input.shape[1]
                     target = (target_tensor[:,:,2:4] - mean[2:])/std[2:]
 
-                    # tgt = torch.zeros_like(target).to(args.device)
-                    # tgt[:, 1:, :] = target[:, :-1, :]
-
-                    # tgt_mask = self._generate_square_mask(
-                    #     dim_trg=dec_seq_len,
-                    #     dim_src=updated_enq_length,
-                    #     mask_type="tgt"
-                    # ).to(args.device)
-
-                    # pred = self(input, tgt, tgt_mask=tgt_mask)
-
-
-                    # Initialize first decoder input as zeros
                     tgt = torch.zeros_like(target).to(args.device)
-            
-                    # Autoregressive generation
-                    for t in range(target.shape[1]-1):
-                        tgt_mask = self._generate_square_mask(dim_trg=dec_seq_len, 
-                                                    dim_src=updated_enq_length, 
-                                                    mask_type="tgt").to(args.device)
-                        
-                        pred = self(input, tgt, tgt_mask=tgt_mask)
-                        # Use the current prediction as input for next timestep
-                        tgt[:, t+1, :] = pred[:, t, :]
+                    tgt[:, 1:, :] = target[:, :-1, :]
+
+                    tgt_mask = self._generate_square_mask(
+                        dim_trg=dec_seq_len,
+                        dim_src=updated_enq_length,
+                        mask_type="tgt"
+                    ).to(args.device)
+
+                    pred = self(input, tgt, tgt_mask=tgt_mask)
                     
                     # Calculate metrics
                     loss = criterion(pred, target)
@@ -686,9 +686,9 @@ class AttentionEMT(nn.Module):
 
                 # Save the model
                 checkpoint_name = args.checkpoint
-                os.makedirs(models_dir, exist_ok=True)
-                torch.save(model_state, os.path.join(models_dir, f"{checkpoint_name}"))
-                print("saving checkpoint at : ", os.path.join(models_dir, f"{checkpoint_name}"))
+                os.makedirs(save_path, exist_ok=True)
+                torch.save(model_state, os.path.join(save_path, f"{checkpoint_name}"))
+                print("saving checkpoint at : ", os.path.join(save_path, f"{checkpoint_name}"))
                 
                 # Move model back to device
                 self.to(args.device)
@@ -849,12 +849,32 @@ class AttentionEMT(nn.Module):
             tgt=decoder_embed,
             memory=encoder_output,
             tgt_mask=tgt_mask
+            # memory_mask=src_mask
         )
         
+
+        sigmax_embeded = self.embedding_sigma(decoder_output)
+        sigmay_embeded = self.embedding_sigma(decoder_output)
+        muex_embeded = self.embedding_mue(decoder_output)
+        muey_embeded = self.embedding_mue(decoder_output)
+
+        # Calculate PI
+        pi = self.pis(decoder_output)
+        pi = nn.functional.softmax(pi, -1)
+
+        # Calculate Sigmas
+        sigma_x = torch.Tensor(torch.exp(self.sigma_x(sigmax_embeded)))
+        sigma_y = torch.Tensor(torch.exp(self.sigma_x(sigmay_embeded)))
+
+        mu_x = torch.Tensor(self.mu_x(muex_embeded))
+        mu_y = torch.Tensor(self.mu_y(muey_embeded))
         # Output projection
         output = self.output_layer(decoder_output)
         
         return output
+
+
+
 
 class Embeddings(nn.Module):
     def __init__(self, d_model, vocab):
