@@ -129,7 +129,7 @@ class RNNPredictor:
         self.input_len = observation_length
         self.target_len = prediction_horizon
 
-        self.num_epochs = 1
+        self.num_epochs = 300
         self.learning_rate = 0.001
         self.patience = 5
         self.device = 0
@@ -241,13 +241,11 @@ class RNNPredictor:
         """
         ade = 0
         fde = 0
-        
+        print("Total batches: ", len(loader))
         with torch.no_grad():
             for batch in loader:
                 inputs, targets = batch
                 outputs = self.predict(inputs.to(self.device), self.target_len)
-                
-                print(outputs)
                 ade += calculate_ade(outputs, targets.to(self.device))
                 fde += calculate_fde(outputs, targets.to(self.device))
         

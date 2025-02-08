@@ -18,6 +18,8 @@ ignore_objects = set(["Vehicle_traffic_light", "Other_traffic_light", "AV"])
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils import compute_frames_idx
 
+objects = set(['Car', 'Bus', 'Motorbike', 'Large_vehicle', 'Medium_vehicle', 'Emergency vehicle',  'Pedestrian', 'Cyclist', 'Small_motorised_vehicle'])
+
 def process_frame(frame, ann):
     for inst in ann[0]['instances']:    
         bbox = inst['contour']['points']
@@ -123,10 +125,32 @@ if __name__ == '__main__':
     #    for i, ann_file in enumerate(annotation_files):
     #        with open(ann_file, 'r') as file:
     #            data = json.load(file)
-    #            nbbox.append(len(data[0]['instances']))
+    #            n = len([d for d in data[0]['instances'] if d['classValues'][0]['value'] in objects])
+    #            nbbox.append(n)
     #    print(f"Density: {np.mean(nbbox)}")
     #    print(f"Total: {np.sum(nbbox)}")        
     #    print('**************************************************************/n')
+    
+    
+    #objects = {}    
+    #for ann in annotations:
+    #    print('**************************************************************/n')
+    #    print(ann)
+    #    annotation_files = sorted([ann + '/' + f for f in os.listdir(ann)])
+
+    #    for i, ann_file in enumerate(annotation_files):
+    #        with open(ann_file, 'r') as file:
+    #            data = json.load(file)
+    #            for inst in data[0]['instances']:
+    #                agent = inst['classValues'][0]['value']
+    #                if agent in objects:
+    #                    objects[agent].append(inst["trackId"])
+    #                else:
+    #                    objects[agent] = [inst["trackId"]]
+    
+    #for k,v in objects.items():
+    #    print(f"{k}    bbox: {len(v)}    agents: {len(set(v))}")                  
+    #print('**************************************************************/n')
         
 
     p = argparse.ArgumentParser(description='plot the annotations')
