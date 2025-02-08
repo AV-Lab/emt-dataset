@@ -59,12 +59,17 @@ class SeqDataset(Dataset):
                 # Calculate velocities for observation
                 obs_vel = obs_tensor[1:] - obs_tensor[:-1]
                 obs_vel = torch.cat([obs_vel[[0]], obs_vel], dim=0)
+                first_target_vel = target_tensor[0:1] - obs_tensor[-1:]  # First target velocity based on last observation
                 obs_tensor = torch.cat([obs_tensor, obs_vel], dim=1)
                 
                 # Calculate velocities for target
-                target_vel = target_tensor[1:] - target_tensor[:-1]
-                target_vel = torch.cat([target_vel[[0]], target_vel], dim=0)
+                rest_target_vel = target_tensor[1:] - target_tensor[:-1]  # Regular velocity computation
+                target_vel = torch.cat([first_target_vel, rest_target_vel], dim=0)
+                # Append velocity to target tensor
                 target_tensor = torch.cat([target_tensor, target_vel], dim=1)
+                # target_vel = target_tensor[1:] - target_tensor[:-1]
+                # target_vel = torch.cat([target_vel[[0]], target_vel], dim=0)
+                # target_tensor = torch.cat([target_tensor, target_vel], dim=1)
             
             all_sequences.append(obs_tensor)
             all_sequences.append(target_tensor)
@@ -108,12 +113,19 @@ class SeqDataset(Dataset):
             # Compute velocities for observation
             obs_vel = obs_tensor[1:] - obs_tensor[:-1]                 # [seq_len-1, 2]
             obs_vel = torch.cat([obs_vel[[0]], obs_vel], dim=0)        # [seq_len, 2]
+            first_target_vel = target_tensor[0:1] - obs_tensor[-1:]    # First target velocity based on last observation
             obs_tensor = torch.cat([obs_tensor, obs_vel], dim=1)       # [seq_len, 4]
             
             # Compute velocities for target
-            target_vel = target_tensor[1:] - target_tensor[:-1]        # [seq_len-1, 2]
-            target_vel = torch.cat([target_vel[[0]], target_vel], dim=0)  # [seq_len, 2]
-            target_tensor = torch.cat([target_tensor, target_vel], dim=1)  # [seq_len, 4]
+            # target_vel = target_tensor[1:] - target_tensor[:-1]        # [seq_len-1, 2]
+            # target_vel = torch.cat([target_vel[[0]], target_vel], dim=0)  # [seq_len, 2]
+            # target_tensor = torch.cat([target_tensor, target_vel], dim=1)  # [seq_len, 4]
+            
+            # Calculate velocities for target
+            rest_target_vel = target_tensor[1:] - target_tensor[:-1]  # Regular velocity computation
+            target_vel = torch.cat([first_target_vel, rest_target_vel], dim=0)
+            # Append velocity to target tensor
+            target_tensor = torch.cat([target_tensor, target_vel], dim=1)
             
         return obs_tensor, target_tensor
     

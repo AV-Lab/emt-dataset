@@ -219,7 +219,7 @@ class ModelConfig:
     actn: str = "gelu"
     # Optimizer parameters
     lr_mul: float = 0.1
-    n_warmup_steps: int = 3500
+    n_warmup_steps: int = 1200
     optimizer_betas: Tuple[float, float] = (0.9, 0.98)
     optimizer_eps: float = 1e-9
     # Device parameter (can be None)
@@ -596,17 +596,6 @@ class AttentionEMT(nn.Module):
                     updated_enq_length = input.shape[1]
                     target = (target_tensor[:,:,2:4] - mean[2:])/std[2:]
 
-                    # tgt = torch.zeros_like(target).to(args.device)
-                    # tgt[:, 1:, :] = target[:, :-1, :]
-
-                    # tgt_mask = self._generate_square_mask(
-                    #     dim_trg=dec_seq_len,
-                    #     dim_src=updated_enq_length,
-                    #     mask_type="tgt"
-                    # ).to(args.device)
-
-                    # pred = self(input, tgt, tgt_mask=tgt_mask)
-
 
                     # Initialize first decoder input as zeros
                     tgt = torch.zeros_like(target).to(args.device)
@@ -624,6 +613,7 @@ class AttentionEMT(nn.Module):
                     # Calculate metrics
                     loss = criterion(pred, target)
                     obs_last_pos = obs_tensor[:, -1:, 0:2]
+                   
                     mad, fad = self.calculate_metrics(
                         pred, target, obs_last_pos,
                         True, mean, std, args.device
