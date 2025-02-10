@@ -234,11 +234,11 @@ def train_attn(args, train_dl, test_dl, model=None, optim=None, epochs=100,
                     # Use the current prediction as input for next timestep
                     tgt[:, t+1, :] = pred[:, t, :]
 
-                # tgt_mask = generate_square_mask(dim_trg=dec_seq_len, 
-                #                               dim_src=updated_enq_length, 
-                #                               mask_type="tgt").to(args.device)
+                tgt_mask = generate_square_mask(dim_trg=dec_seq_len, 
+                                              dim_src=updated_enq_length, 
+                                              mask_type="tgt").to(args.device)
 
-                # pred = model(input, tgt, tgt_mask=tgt_mask)
+                pred = model(input, tgt, tgt_mask=tgt_mask)
                 
                 # Calculate metrics
                 loss = criterion(pred, target)

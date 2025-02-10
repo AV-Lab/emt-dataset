@@ -199,9 +199,12 @@ class ScheduledOptim():
 
         self.n_steps += 1
         lr = self.lr_mul * self._get_lr_scale()
+        # print("Learning rate: ", lr)  # Print the current learning rate for debugging purposes
 
         for param_group in self._optimizer.param_groups:
             param_group['lr'] = lr
+    # def learning_rate(Self):
+    #     return self._optimizer.param_groups[0]['lr']
 
 @dataclass
 class ModelConfig:
@@ -218,8 +221,8 @@ class ModelConfig:
     batch_first: bool = True
     actn: str = "gelu"
     # Optimizer parameters
-    lr_mul: float = 0.1
-    n_warmup_steps: int = 1200
+    lr_mul: float =  0.05 
+    n_warmup_steps: int = 1200 #1200 #3500
     optimizer_betas: Tuple[float, float] = (0.9, 0.98)
     optimizer_eps: float = 1e-9
     # Device parameter (can be None)
