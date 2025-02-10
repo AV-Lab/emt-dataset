@@ -6,3 +6,4 @@ temp/
 **/__pycache__/
 
 prediction/results/
+test.ipynb

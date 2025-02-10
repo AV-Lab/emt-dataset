@@ -103,8 +103,7 @@ def generate_prediction_annotations(raw_annotations, prediction_annotations_path
         
         file_name = ann.split('/')[-1]
         save_labels_to_txt(filtered_objects_predictions, prediction_annotations_path, file_name)
-        
-
+            
 def main():
     raw_annotations_path = "../data/raw_annotations"
     prediction_annotations_path = "../data/annotations/prediction_annotations"
