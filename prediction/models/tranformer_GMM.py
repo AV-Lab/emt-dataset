@@ -46,127 +46,6 @@ class PositionalEncoding(nn.Module):
 
         return self.dropout(x)
 
-class Attention_EMT(nn.Module):
-    def __init__(self,
-        in_features = 2,
-        out_features = 2,
-        num_heads = 2,
-        num_encoder_layers = 3,
-        num_decoder_layers = 3,
-        embedding_size = 128,
-        dropout = 0.2,
-        max_length = 12,
-        batch_first = True,
-        actn = "gelu",
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-):
-            super(Attention_EMT, self).__init__()
-            self.device = device
-            self.num_heads = num_heads
-            self.num_encoder_layers = num_encoder_layers
-            self.num_decoder_layers = num_decoder_layers
-            self.max_len = max_length
-            self.input_features = in_features
-            self.output_features = out_features
-            self.out_length = max_length
-            self.d_model= embedding_size # selected
-            self.dropout_encoder = dropout
-            self.dropout_decoder = dropout
-            self.dropout_pos_enc = 0.0
-            self.ndim = 2
-
-            
-        
-            
-            #Following the original transformer paper's design where dim_feedforward is typically 4x larger than d_model
-            self.dim_feedforward_encoder = 4*self.d_model
-            self.dim_feedforward_decoder = 4*self.d_model
-
-
-            # Positional Encoding
-            self.positional_encoding_layer = PositionalEncoding(
-                d_model=self.d_model,
-                dropout=self.dropout_pos_enc,
-                max_len = self.max_len,
-                batch_first = batch_first
-                )
-
-            # Creating the  linear layers needed for the model
-            self.encoder_input_layer = Linear_Embeddings(self.input_features, self.d_model) 
-            self.decoder_input_layer = Linear_Embeddings(self.output_features, self.d_model)   
-
-
-            self.encoder_layer = nn.TransformerEncoderLayer(
-                d_model=self.d_model,
-                nhead=self.num_heads, 
-                dim_feedforward=self.dim_feedforward_encoder,
-                dropout=self.dropout_encoder,
-                batch_first=batch_first,
-                activation=actn
-                )
-
-
-            self.encoder = nn.TransformerEncoder(
-                encoder_layer =  self.encoder_layer,
-                num_layers = self.num_encoder_layers
-                )
-            
-            # Create the decoder layer
-            self.decoder_layer = nn.TransformerDecoderLayer(
-                d_model=self.d_model,
-                nhead=self.num_heads, 
-                dim_feedforward = self.dim_feedforward_decoder,
-                dropout = self.dropout_decoder,
-                batch_first=batch_first,   
-                activation=actn
-            )
-
-            self.decoder = nn.TransformerDecoder(
-                decoder_layer = self.decoder_layer,
-                num_layers=self.num_decoder_layers
-                )
-            
-            # Output layer (to map decoder output to the target shape)
-            self.output_layer = nn.Linear(self.d_model, self.output_features)  
-
-    
-    def forward(self, src: torch.Tensor, tgt: torch.Tensor, src_mask: torch.Tensor=None, 
-                tgt_mask: torch.Tensor=None) -> torch.Tensor:
-        
-        # Move inputs to device at the start
-        src = src.to(self.device)
-        tgt = tgt.to(self.device)
-        if src_mask is not None:
-            src_mask = src_mask.to(self.device)
-        if tgt_mask is not None:
-            tgt_mask = tgt_mask.to(self.device)
-
-        # Embedding 
-        encoder_embed = self.encoder_input_layer(src)
-        encoder_embed = self.positional_encoding_layer(encoder_embed) #,src_mask=src_mask # Pass src_mask if used
-
-        # src shape: [batch_size, enc_seq_len, dim_val]
-        encoder_out = self.encoder(src=encoder_embed)
-
-        # Pass decoder input through decoder input layer
-        decoder_embed = self.decoder_input_layer(tgt)
-        decoder_output = self.positional_encoding_layer(decoder_embed) 
-
-        # Pass throguh decoder - output shape: [batch_size, target seq len, dim_val]
-        decoder_output = self.decoder(
-            tgt=decoder_output,
-            memory=encoder_out,
-            tgt_mask=tgt_mask
-            # memory_mask=src_mask
-            )
-        
-        # Output projection shape: [batch_size, target seq len, dim_val]
-        output = self.output_layer(decoder_output)
-
-        return  output
-
-
-
 '''
 A wrapper class for scheduled optimizer 
 source: https://github.com/jadore801120/attention-is-all-you-need-pytorch/blob/master/transformer/Optim.py
@@ -209,9 +88,49 @@ class ScheduledOptim():
         for param_group in self._optimizer.param_groups:
             param_group['lr'] = lr
 
+# @dataclass
+# class ModelConfig:
+#     """Configuration for the AttentionGMM model."""
+#     # Model architecture parameters
+#     in_features: int = 2
+#     out_features: int = 2
+#     num_heads: int = 2
+#     num_encoder_layers: int = 3
+#     num_decoder_layers: int = 3
+#     embedding_size: int = 128
+#     dropout: float = 0.2
+#     max_length: int = 12
+#     batch_first: bool = True
+#     actn: str = "gelu"
+
+#     #GMM parameters
+#     n_gaussians: int = 8
+#     n_hidden : int = 80
+
+#     # Optimizer parameters
+#     lr_mul: float = 0.1
+#     n_warmup_steps: int = 3500
+#     optimizer_betas: Tuple[float, float] = (0.9, 0.98)
+#     optimizer_eps: float = 1e-9
+#     # Device parameter (can be None)
+#     device: Optional[torch.device] = None
+
+
+
+    
+#     def get_device(self) -> torch.device:
+#         """Get the device to use. If not provided, use cuda if available else cpu."""
+#         if self.device is not None:
+#             return self.device
+#         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+#     def to_dict(self) -> Dict[str, Any]:
+#         """Convert config to dictionary."""
+#         return asdict(self)
+
 @dataclass
 class ModelConfig:
-    """Configuration for the AttentionEMT model."""
+    """Configuration for the AttentionGMM model."""
     # Model architecture parameters
     in_features: int = 2
     out_features: int = 2
@@ -224,19 +143,66 @@ class ModelConfig:
     batch_first: bool = True
     actn: str = "gelu"
 
-    #GMM parameters
-    n_gaussians: int = 5
-    n_hidden : int = 10
+    # GMM parameters
+    n_gaussians: int = 4
+    n_hidden: int = 32
 
     # Optimizer parameters
-    lr_mul: float = 0.1
-    n_warmup_steps: int = 3500
+    lr_mul: float = 0.05
+    n_warmup_steps: int = 1200
     optimizer_betas: Tuple[float, float] = (0.9, 0.98)
     optimizer_eps: float = 1e-9
     # Device parameter (can be None)
     device: Optional[torch.device] = None
 
-    
+    def display_config(self, verbose: bool = False) -> None:
+        """
+        Pretty print the model configuration.
+        
+        Args:
+            verbose (bool): If True, prints additional information and formatting
+        """
+        if verbose:
+            print("\n" + "="*50)
+            print("AttentionGMM Model Configuration")
+            print("="*50)
+            
+            print("\nModel Architecture:")
+            print("-"*20)
+            print(f"Input Features:      {self.in_features}")
+            print(f"Output Features:     {self.out_features}")
+            print(f"Number of Heads:     {self.num_heads}")
+            print(f"Encoder Layers:      {self.num_encoder_layers}")
+            print(f"Decoder Layers:      {self.num_decoder_layers}")
+            print(f"Embedding Size:      {self.embedding_size}")
+            print(f"Dropout Rate:        {self.dropout}")
+            print(f"Max Sequence Length: {self.max_length}")
+            print(f"Batch First:         {self.batch_first}")
+            print(f"Activation Function: {self.actn}")
+            
+            print("\nGMM Settings:")
+            print("-"*20)
+            print(f"Number of Gaussians: {self.n_gaussians}")
+            print(f"Hidden Size:         {self.n_hidden}")
+            
+            print("\nOptimizer Settings:")
+            print("-"*20)
+            print(f"Learning Rate Multiplier: {self.lr_mul}")
+            print(f"Warmup Steps:            {self.n_warmup_steps}")
+            print(f"Optimizer Betas:         {self.optimizer_betas}")
+            print(f"Optimizer Epsilon:       {self.optimizer_eps}")
+            
+            print("\nDevice Configuration:")
+            print("-"*20)
+            print(f"Device: {self.get_device()}")
+            print("\n" + "="*50)
+        else:
+            # Simple print of key parameters
+            print(f"AttentionGMM Config: in_features={self.in_features}, "
+                  f"out_features={self.out_features}, num_heads={self.num_heads}, "
+                  f"embedding_size={self.embedding_size}, dropout={self.dropout}, "
+                  f"n_gaussians={self.n_gaussians}")
+
     def get_device(self) -> torch.device:
         """Get the device to use. If not provided, use cuda if available else cpu."""
         if self.device is not None:
@@ -245,9 +211,8 @@ class ModelConfig:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary."""
-        return asdict(self)
-    
-class AttentionEMT(nn.Module):
+        return asdict(self)    
+class AttentionGMM(nn.Module):
     """
     Attention-based Encoder-Decoder Transformer Model for time series forecasting.
     
@@ -280,8 +245,6 @@ class AttentionEMT(nn.Module):
         else:
             self.config = config
 
-        print(self.config)
-
         
         # Store model parameters
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #self.config.get_device # Uses either provided device or default
@@ -308,6 +271,8 @@ class AttentionEMT(nn.Module):
         
         # Set feedforward dimensions (4x larger than d_model as per original paper)
         self.dim_feedforward = 4 * self.d_model
+
+       
         
         # Initialize embeddings and positional encoding
         self.encoder_input_layer = Linear_Embeddings(self.input_features, self.d_model)
@@ -389,8 +354,8 @@ class AttentionEMT(nn.Module):
         self.mu_y = nn.Linear(self.hidden_hid, self.gaussians)
 
         
-        # Initialize weights using Xavier uniform initialization
-        # self._init_weights()
+      
+
        
     
     def _init_weights(self):
@@ -401,7 +366,7 @@ class AttentionEMT(nn.Module):
 
     
     @classmethod
-    def load_model(cls, path: str, device: Optional[torch.device] = None) -> 'AttentionEMT':
+    def load_model(cls, path: str, device: Optional[torch.device] = None) -> 'AttentionGMM':
         """
         Load a saved model from disk.
         
@@ -470,7 +435,105 @@ class AttentionEMT(nn.Module):
             n_warmup_steps=n_warmup_steps
         )
     
+    def _sample_max_component_mean(self,pi, sigma, mue):
+        """
+        Samples means from mixture model by selecting maximum probability components.
+        
+        Args:
+            pi (torch.Tensor): Mixture weights (batch_size, seq_len, n_mixtures)
+            sigma (torch.Tensor): Standard deviations (not currently used)
+            mue (torch.Tensor): Means (batch_size, seq_len, n_mixtures, 2)
+        
+        Returns:
+                torch.Tensor: Sampled means (batch_size, seq_len, 2)
+            """  
+        max_indices = torch.argmax(pi, dim=2).unsqueeze(-1)
+        # use gather to select the mix dimension of a based on the indices in b_squeezed
+        selected_mix = torch.gather(mue, dim=2, index=max_indices.unsqueeze(dim=-1).repeat(1, 1, 1, 2))
 
+        # squeeze out the mix dimension to get the result of shape (batch_size, seq_len, 2)
+        selected_mix = selected_mix.squeeze(dim=2)
+        
+        return selected_mix
+    
+    
+    def _bivariate(self,pi,sigma_x,sigma_y, mu_x , mu_y,input):
+
+        # Check the num of dims
+        if input.ndim ==3:
+            x = input[:,:,0].to(self.config.device)
+            y = input[:,:,1].to(self.config.device)
+            x = x.unsqueeze(-1).to(self.config.device)
+            y = y.unsqueeze(-1).to(self.config.device)
+            #print("Num of Dims is 3 : ",input.shape)
+        elif input.ndim ==2:
+            x = input[:,0]
+            y = input[:,1]
+            x = x.unsqueeze(dim=1).to(self.config.device)
+            y = y.unsqueeze(dim=1).to(self.config.device)
+            # print("Num of Dims is 2 : ",input.shape)
+        # make |mu|=K copies of y, subtract mu, divide by sigma
+        #print("Input: ",input.shape ,"\nX: ",x.shape,"\nY: ",y.shape,"\nMu_x : ",mu_x.shape,"\nMu_y : ",mu_y.shape,"\nSigma_x : ",sigma_x.shape)
+        result_x = torch.square((x.expand_as(mu_x) - mu_x) * torch.reciprocal(sigma_x))
+        result_y = torch.square((y.expand_as(mu_y) - mu_y) * torch.reciprocal(sigma_y))
+        
+
+        result = -0.5*(result_x + result_y)
+        log_pi = torch.log(pi)
+        log_TwoPiSigma = -torch.log (2.0*np.pi*sigma_x*sigma_y)
+        # expand log values
+        values = log_pi + log_TwoPiSigma.expand_as(log_pi) 
+
+        return (values + result)
+    def _mdn_loss_fn(self,pi, sigma_x,sigma_y, mu_x , mu_y,y,mixtures):
+        # calculate the score for each mixture of the gaussian_distribution
+        # input shape (sample_size,num_mixtures,parameter) parametr is 2 in mue (x,y) and 2,2 in sigma [xx,xy,yx,yy] 
+        # Pi has shape of  (sample_size,num_mixtures)
+        # swap axis to have shape (num_mixtures,sample_size,parameter)
+        # print("Before anythinG: ",sigma_x.shape,sigma_y.shape, mu_x.shape , mu_y.shape,'\n: ',y.shape,'\n')
+
+
+        # mask = torch.lt(pi, 0)
+        # mask_res = torch.lt(pi, 0)
+
+        # # check if any element in the tensor satisfies the condition
+        # if torch.any(mask):
+        #     print("The pi tensor contains negative values.")
+        # else:
+        #     print("The pi tensor does not contain negative values.")
+
+        
+        result = self._bivariate(pi,sigma_x,sigma_y, mu_x , mu_y,y) 
+        # print("result shape: ",result.shape)
+        # mask_res = torch.lt(result, 0)
+
+        # # check if any element in the tensor satisfies the condition
+        # if torch.any(mask_res):
+        #     print("The result tensor contains negative values.")
+        # else:
+        #     print("The result tensor does not contain negative values.")
+        # max of results
+        # m = torch.max(result)
+        # changed value of max
+        #torch.tensor
+        m = (torch.max(result, dim=2, keepdim=True)[0]).repeat(1,1,mixtures)
+        # print("max of results shape: ",m.shape)
+        # print("result of results shape: ",result.shape)
+        # LogSumExp trick log(sum(exp)) will be = m + log(sum (exp (result-m)))
+        exp_value = torch.exp(result-m)
+        # print("exp_value of exp_value shape: ",exp_value.shape)
+        epsilon = 0.00001
+        # changed the last dimention dim from 1 to -1
+        result = torch.sum(exp_value, dim=-1) + epsilon
+        #print("result after sum: ",result)
+        #org
+        #result = -(m + torch.log(result))
+        result = -(m[:,:,0] + torch.log(result))
+        # counter+=1
+        if(torch.isnan(result).any()):
+            # print("Counter loss: ",counter)
+            print("result m : ",m.item)
+        return torch.mean(result)
     def train_model(
         self,
         args,
@@ -488,7 +551,11 @@ class AttentionEMT(nn.Module):
         """
         Train the model with metrics tracking and visualization.
         """
-        # self._init_weights()
+        # Initialize weights using Xavier uniform initialization
+        self._init_weights()
+
+        #  if verbose print config:
+        self.config.display_config(verbose)
         # Setup optimizer with model's configuration
         optimizer = self.configure_optimizer(
             lr_mul=self.lr_mul,
@@ -540,9 +607,12 @@ class AttentionEMT(nn.Module):
                 updated_enq_length = input.shape[1]
                 target = (target_tensor[:,:,2:4] - mean[2:])/std[2:]
 
-                # Prepare target input (teacher forcing)
-                tgt = torch.zeros_like(target).to(args.device)
-                tgt[:, 1:, :] = target[:, :-1, :]
+
+                # # Prepare target input (teacher forcing)
+                # tgt = torch.zeros_like(target).to(args.device)
+                # tgt[:, 1:, :] = target[:, :-1, :]
+
+                tgt = torch.Tensor([0, 0]).unsqueeze(0).unsqueeze(1).repeat(target.shape[0],dec_seq_len,1).to(args.device)
 
                 # Generate masks
                 tgt_mask = self._generate_square_mask(
@@ -559,40 +629,46 @@ class AttentionEMT(nn.Module):
 
                 # Forward pass
                 optimizer.zero_grad()
-                pred = self(input, tgt, tgt_mask=tgt_mask)
+
+                pi, sigma_x,sigma_y, mu_x , mu_y,decoder_out = self(input,tgt,tgt_mask = tgt_mask)
+                mus = torch.cat((mu_x.unsqueeze(-1),mu_y.unsqueeze(-1)),-1)
+                sigmas = torch.cat((sigma_x.unsqueeze(-1),sigma_y.unsqueeze(-1)),-1)
+
                 
                 # Calculate loss
-                train_loss = criterion(pred, target)
+                train_loss = self._mdn_loss_fn(pi, sigma_x,sigma_y, mu_x , mu_y,target,self.config.n_gaussians)
                 
                 # Backward pass
                 train_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                 optimizer.step_and_update_lr()
 
-                # Calculate metrics
-                obs_last_pos = obs_tensor[:, -1:, 0:2]
-                mad, fad = self.calculate_metrics(
-                    pred.detach(), target, obs_last_pos,
-                    True, mean, std, args.device
-                )
-                
-                # Update epoch metrics
-                epoch_loss += train_loss.item()
-                epoch_ade += mad
-                epoch_fde += fad
-                
-                # Update progress bar
-                if verbose:
-                    load_train.set_postfix({
-                        'loss': f"{train_loss.item():.4f}",
-                        'ADE': f"{mad:.4f}",
-                        'FDE': f"{fad:.4f}"
-                    })
+                with torch.no_grad(): # to avoid data leakage during sampling
+                    sample_preds = self._sample_max_component_mean(pi, sigmas, mus)
+                    # Calculate metrics
+                    obs_last_pos = obs_tensor[:, -1:, 0:2]
+                    mad, fad = self.calculate_metrics(
+                        sample_preds.detach(), target, obs_last_pos,
+                        True, mean, std, args.device
+                    )
+                    
+                    # Update epoch metrics
+                    epoch_loss += train_loss.item()
+                    epoch_ade += mad
+                    epoch_fde += fad
+                    
+                    # Update progress bar
+                    if verbose:
+                        load_train.set_postfix({
+                            'loss': f"{train_loss.item():.4f}",
+                            'ADE': f"{mad:.4f}",
+                            'FDE': f"{fad:.4f}"
+                        })
 
-            # Calculate average training metrics
-            avg_train_loss = epoch_loss / len(train_dl)
-            avg_train_ade = epoch_ade / len(train_dl)
-            avg_train_fde = epoch_fde / len(train_dl)
+                # Calculate average training metrics
+                avg_train_loss = epoch_loss / len(train_dl)
+                avg_train_ade = epoch_ade / len(train_dl)
+                avg_train_fde = epoch_fde / len(train_dl)
             
             # Test evaluation
             self.eval()
@@ -610,8 +686,10 @@ class AttentionEMT(nn.Module):
                     updated_enq_length = input.shape[1]
                     target = (target_tensor[:,:,2:4] - mean[2:])/std[2:]
 
-                    tgt = torch.zeros_like(target).to(args.device)
-                    tgt[:, 1:, :] = target[:, :-1, :]
+                    # tgt = torch.zeros_like(target).to(args.device)
+                    # tgt[:, 1:, :] = target[:, :-1, :]
+
+                    tgt = torch.Tensor([0, 0]).unsqueeze(0).unsqueeze(1).repeat(target.shape[0],dec_seq_len,1).to(args.device)
 
                     tgt_mask = self._generate_square_mask(
                         dim_trg=dec_seq_len,
@@ -619,13 +697,18 @@ class AttentionEMT(nn.Module):
                         mask_type="tgt"
                     ).to(args.device)
 
-                    pred = self(input, tgt, tgt_mask=tgt_mask)
+                    pi, sigma_x,sigma_y, mu_x , mu_y,decoder_out = self(input,tgt,tgt_mask = tgt_mask)
+                    mus = torch.cat((mu_x.unsqueeze(-1),mu_y.unsqueeze(-1)),-1)
+                    sigmas = torch.cat((sigma_x.unsqueeze(-1),sigma_y.unsqueeze(-1)),-1)
+
+                    # Sample_pred
+                    test_sample_preds = self._sample_max_component_mean(pi, sigmas, mus)
                     
                     # Calculate metrics
-                    loss = criterion(pred, target)
+                    loss = self._mdn_loss_fn(pi, sigma_x,sigma_y, mu_x , mu_y,target,self.config.n_gaussians)
                     obs_last_pos = obs_tensor[:, -1:, 0:2]
                     mad, fad = self.calculate_metrics(
-                        pred, target, obs_last_pos,
+                        test_sample_preds, target, obs_last_pos,
                         True, mean, std, args.device
                     )
                     
@@ -868,10 +951,10 @@ class AttentionEMT(nn.Module):
 
         mu_x = torch.Tensor(self.mu_x(muex_embeded))
         mu_y = torch.Tensor(self.mu_y(muey_embeded))
-        # Output projection
-        output = self.output_layer(decoder_output)
+      
         
-        return output
+        return pi, sigma_x,sigma_y, mu_x ,mu_y,decoder_output
+  
 
 
 

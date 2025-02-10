@@ -25,6 +25,7 @@ from dataloaders.seq_loader import SeqDataset
 
 from models.rnn import RNNPredictor
 from models.transformer import Attention_EMT,AttentionEMT
+from models.tranformer_GMM import AttentionGMM
 import torch
 import torch.nn as nn
 
@@ -46,7 +47,7 @@ if __name__ == '__main__':
     p.add_argument('future_trajectory',type=int, help='Prediction Horizon')
     p.add_argument('epochs', type=str, default=50, help='Num of training epochs')
     p.add_argument('--window_size', default=1, type=int, help='Sliding window')
-    p.add_argument('--predictor', type=str, choices=['lstm', 'gnn', 'transformer'], default='transformer',help='Predictor type')
+    p.add_argument('--predictor', type=str, choices=['lstm', 'gnn', 'transformer','transformer-gmm'], default='transformer-gmm',help='Predictor type')
     p.add_argument('--setting', type=str, default='train',choices=['train', 'evaluate'], help='Execution mode (train or evaluate)')
     p.add_argument('--checkpoint', type=str, default=None, help='Path to model checkpoint file, required if mode is evaluate')
     p.add_argument('--annotations_path', type=str, default="data/annotations", help='If annotations are placed in a location different from recomended')
@@ -62,7 +63,8 @@ if __name__ == '__main__':
         print("No checkpoint provided")
         exit
     elif args.setting == "train" and not args.checkpoint:
-        args.checkpoint = f'transformer_P_{args.past_trajectory}_F_{args.future_trajectory}_W_{args.window_size}.pth'
+        args.checkpoint = f'GMM_transformer_P_{args.past_trajectory}_F_{args.future_trajectory}_W_{args.window_size}.pth'
+        # args.checkpoint = f'transformer_P_{args.past_trajectory}_F_{args.future_trajectory}_W_{args.window_size}.pth'
     if args.device == "cuda" and not cuda.is_available():
         args.device = "cpu"
         print("Could not find GPU. Using CPU instead!")
@@ -91,7 +93,7 @@ if __name__ == '__main__':
     
     # Create DataLoaders
     # Transformer and GMM models use relative position rather than absolute position 
-    if args.predictor=='transformer' or args.predictor=='gmm': 
+    if args.predictor=='transformer' or args.predictor=='transformer-gmm': 
         include_velocity = True
     else:
         include_velocity = False
@@ -118,6 +120,16 @@ if __name__ == '__main__':
         ).to(args.device)
 
         transformer.train_model(args,train_dl=train_dataloader ,test_dl=test_dataloader,epochs=int(args.epochs),mean=train_mean,std=train_std)
+    
+    if args.predictor=='transformer-gmm':
+        args.checkpoint = f'GMM_transformer_P_{args.past_trajectory}_F_{args.future_trajectory}_W_{args.window_size}.pth'
+        # Initialize model - > All parameters are the same as ModelConfig defaults except max_length
+        gmmTransformer = AttentionGMM(
+            max_length=max_timestep_len,
+            device=args.device
+        ).to(args.device)
+
+        gmmTransformer.train_model(args,train_dl=train_dataloader ,test_dl=test_dataloader,epochs=int(args.epochs),mean=train_mean,std=train_std)
 
         
  
