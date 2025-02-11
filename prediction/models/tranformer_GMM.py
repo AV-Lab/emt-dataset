@@ -88,53 +88,82 @@ class ScheduledOptim():
         for param_group in self._optimizer.param_groups:
             param_group['lr'] = lr
 
-# @dataclass
-# class ModelConfig:
-#     """Configuration for the AttentionGMM model."""
-#     # Model architecture parameters
-#     in_features: int = 2
-#     out_features: int = 2
-#     num_heads: int = 2
-#     num_encoder_layers: int = 3
-#     num_decoder_layers: int = 3
-#     embedding_size: int = 128
-#     dropout: float = 0.2
-#     max_length: int = 12
-#     batch_first: bool = True
-#     actn: str = "gelu"
-
-#     #GMM parameters
-#     n_gaussians: int = 8
-#     n_hidden : int = 80
-
-#     # Optimizer parameters
-#     lr_mul: float = 0.1
-#     n_warmup_steps: int = 3500
-#     optimizer_betas: Tuple[float, float] = (0.9, 0.98)
-#     optimizer_eps: float = 1e-9
-#     # Device parameter (can be None)
-#     device: Optional[torch.device] = None
-
-
-
-    
-#     def get_device(self) -> torch.device:
-#         """Get the device to use. If not provided, use cuda if available else cpu."""
-#         if self.device is not None:
-#             return self.device
-#         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-#     def to_dict(self) -> Dict[str, Any]:
-#         """Convert config to dictionary."""
-#         return asdict(self)
-
+class MetricTracker:
+   def __init__(self):
+       # Separate running metrics for train and test
+       self.running_metrics = {
+           'train': {
+               'loss': {'value': 0, 'count': 0},
+               'ade': {'value': 0, 'count': 0},
+               'fde': {'value': 0, 'count': 0},
+               'best_ade': {'value': 0, 'count': 0},
+               'best_fde': {'value': 0, 'count': 0}
+           },
+           'test': {
+               'loss': {'value': 0, 'count': 0},
+               'ade': {'value': 0, 'count': 0},
+               'fde': {'value': 0, 'count': 0},
+               'best_ade': {'value': 0, 'count': 0},
+               'best_fde': {'value': 0, 'count': 0}
+           }
+       }
+       
+       self.history = {
+           'train_loss': [], 'test_loss': [],
+           'train_ade': [], 'test_ade': [],
+           'train_fde': [], 'test_fde': [],
+           'train_best_ade': [], 'test_best_ade': [],
+           'train_best_fde': [], 'test_best_fde': []
+       }
+       
+       self.best_metrics = {
+           'ade': float('inf'),
+           'epoch': 0
+       }
+   
+   def update(self, metrics_dict, batch_size, phase='train'):
+       """Update running metrics with batch results"""
+       for key, value in metrics_dict.items():
+           self.running_metrics[phase][key]['value'] += value * batch_size
+           self.running_metrics[phase][key]['count'] += batch_size
+   
+   def get_averages(self, phase='train'):
+       """Compute averages for specified phase"""
+       averages = {}
+       for key, metric in self.running_metrics[phase].items():
+           averages[key] = metric['value'] / metric['count'] if metric['count'] > 0 else 0
+       return averages
+   
+   def reset(self, phase='train'):
+       """Reset running metrics for specified phase"""
+       for metric in self.running_metrics[phase].values():
+           metric['value'] = 0
+           metric['count'] = 0
+           
+   def print_epoch_metrics(self, epoch, epochs, verbose=True):
+       """Print epoch metrics including best-of-N results"""
+       if verbose:
+           train_avgs = self.get_averages('train')
+           test_avgs = self.get_averages('test')
+           
+           print(f"\nEpoch {epoch+1}/{epochs}")
+           print(f"Train - Loss: {train_avgs['loss']:.4f}, "
+                 f"ADE: {train_avgs['ade']:.4f}, "
+                 f"FDE: {train_avgs['fde']:.4f}, "
+                 f"Best_ADE: {train_avgs['best_ade']:.4f}, "
+                 f"Best_FDE: {train_avgs['best_fde']:.4f}")
+           print(f"Test  - Loss: {test_avgs['loss']:.4f}, "
+                 f"ADE: {test_avgs['ade']:.4f}, "
+                 f"FDE: {test_avgs['fde']:.4f}, "
+                 f"Best_ADE: {test_avgs['best_ade']:.4f}, "
+                 f"Best_FDE: {test_avgs['best_fde']:.4f}")
 @dataclass
 class ModelConfig:
     """Configuration for the AttentionGMM model."""
     # Model architecture parameters
     in_features: int = 2
     out_features: int = 2
-    num_heads: int = 2
+    num_heads: int = 4
     num_encoder_layers: int = 3
     num_decoder_layers: int = 3
     embedding_size: int = 128
@@ -144,12 +173,12 @@ class ModelConfig:
     actn: str = "gelu"
 
     # GMM parameters
-    n_gaussians: int = 4
+    n_gaussians: int = 6
     n_hidden: int = 32
 
     # Optimizer parameters
-    lr_mul: float = 0.05
-    n_warmup_steps: int = 1200
+    lr_mul: float = 0.2
+    n_warmup_steps: int = 4000
     optimizer_betas: Tuple[float, float] = (0.9, 0.98)
     optimizer_eps: float = 1e-9
     # Device parameter (can be None)
@@ -317,47 +346,78 @@ class AttentionGMM(nn.Module):
         self.output_layer = nn.Linear(self.d_model, self.output_features)
 
 
-        self.embedding_sigma = nn.Sequential(
-        nn.Linear(self.d_model,self.hidden),
-        nn.ELU(),#nn.GELU(),#nn.LeakyReLU(), #nn.GELU(),#nn.ReLU(),
-        nn.Linear(self.hidden,self.hidden//2),
-        nn.ELU(),
-        nn.Linear(self.hidden//2,self.hidden//4),
-        nn.ELU()#nn.GELU(),#nn.LeakyReLU(),#nn.GELU(),#nn.ReLU(),
-        )
-        self.embedding_mue = nn.Sequential(
-        nn.Linear(self.d_model,self.hidden),
-        nn.ELU(),#nn.GELU(),#nn.LeakyReLU(), #nn.GELU(),#nn.ReLU(),
-        nn.Linear(self.hidden,self.hidden//2),
-        nn.ELU(),
-        nn.Linear(self.hidden//2,self.hidden//4),
-        nn.ELU()#nn.GELU(),#nn.LeakyReLU(),#nn.GELU(),#nn.ReLU(),
-        )
+        # # Shared embedding network
+        # self.shared_embedding = nn.Sequential(
+        #     nn.Linear(self.d_model, self.hidden),
+        #     nn.ELU(),
+        #     nn.Linear(self.hidden, self.hidden // 2),
+        #     nn.ELU(),
+        #     nn.Linear(self.hidden // 2, self.hidden // 4),
+        #     nn.ELU()
+        # )
 
-        self.pis = nn.Sequential(
-        nn.Linear(self.d_model,self.hidden),
-        nn.ELU(),
-        nn.Linear(self.hidden,self.hidden//2),
-        nn.ELU(),#nn.GELU(),#nn.LeakyReLU(), #nn.GELU(),#nn.ReLU(),
-        nn.Linear(self.hidden//2,self.hidden//4),
-        nn.ELU(),
-        nn.Linear(self.hidden//4,self.gaussians)
-        #nn.Softmax()
-        )
+        # # Mixture weights (Softmax applied in forward)
+        # self.pis = nn.Linear(self.hidden // 4, self.gaussians)
+
+        # Create independent embedding networks  for mu and sigma
+        self.embedding_sigma = self.create_gmm_embedding()
+        self.embedding_mue = self.create_gmm_embedding()
+        self.embedding_pi = self.create_gmm_embedding()
+
+        # Mixture weights
+        self.pis_head = nn.Linear(self.hidden // 2, self.gaussians)
+        # Output layers for sigma and mu
+        self.sigma_head = nn.Linear(self.hidden // 2, self.gaussians * 2)
+        self.mu_head = nn.Linear(self.hidden // 2, self.gaussians * 2)
+
+
+
+        # self.embedding_sigma = nn.Sequential(
+        # nn.Linear(self.d_model,self.hidden),
+        # nn.ELU(),#nn.GELU(),#nn.LeakyReLU(), #nn.GELU(),#nn.ReLU(),
+        # nn.Linear(self.hidden,self.hidden//2),
+        # nn.ELU(),
+        # nn.Linear(self.hidden//2,self.hidden//4),
+        # nn.ELU()#nn.GELU(),#nn.LeakyReLU(),#nn.GELU(),#nn.ReLU(),
+        # )
+        # self.embedding_mue = nn.Sequential(
+        # nn.Linear(self.d_model,self.hidden),
+        # nn.ELU(),#nn.GELU(),#nn.LeakyReLU(), #nn.GELU(),#nn.ReLU(),
+        # nn.Linear(self.hidden,self.hidden//2),
+        # nn.ELU(),
+        # nn.Linear(self.hidden//2,self.hidden//4),
+        # nn.ELU()#nn.GELU(),#nn.LeakyReLU(),#nn.GELU(),#nn.ReLU(),
+        # )
+
+        # self.pis = nn.Sequential(
+        # nn.Linear(self.d_model,self.hidden),
+        # nn.ELU(),
+        # nn.Linear(self.hidden,self.hidden//2),
+        # nn.ELU(),#nn.GELU(),#nn.LeakyReLU(), #nn.GELU(),#nn.ReLU(),
+        # nn.Linear(self.hidden//2,self.hidden//4),
+        # nn.ELU(),
+        # nn.Linear(self.hidden//4,self.gaussians),
+        # nn.Softmax(dim=-1)
+        # )
 
         
-        self.hidden_hid = self.hidden//4
-        # self.pis = nn.Linear(self.hidden_hid,self.gaussians).to(device)
-        self.sigma_x = nn.Linear(self.hidden_hid, self.gaussians)
-        self.sigma_y = nn.Linear(self.hidden_hid, self.gaussians)
-        self.mu_x = nn.Linear(self.hidden_hid, self.gaussians)
-        self.mu_y = nn.Linear(self.hidden_hid, self.gaussians)
+        # self.hidden_hid = self.hidden//4
+        # # self.pis = nn.Linear(self.hidden_hid,self.gaussians).to(device)
+        # self.sigma_x = nn.Linear(self.hidden_hid, self.gaussians)
+        # self.sigma_y = nn.Linear(self.hidden_hid, self.gaussians)
+        # self.mu_x = nn.Linear(self.hidden_hid, self.gaussians)
+        # self.mu_y = nn.Linear(self.hidden_hid, self.gaussians)
 
         
-      
-
-       
-    
+    def create_gmm_embedding(self):
+        return nn.Sequential(
+            nn.Linear(self.d_model, self.hidden),
+            nn.ELU(),
+            nn.Linear(self.hidden, int(self.hidden * 0.75)),
+            nn.ELU(),
+            nn.Linear(int(self.hidden * 0.75), self.hidden // 2),
+            nn.ELU()
+        )
     def _init_weights(self):
         """Initialize the model weights using Xavier uniform initialization."""
         for p in self.parameters():
@@ -455,22 +515,57 @@ class AttentionGMM(nn.Module):
         selected_mix = selected_mix.squeeze(dim=2)
         
         return selected_mix
+    def _sample_gmm_predictions(self, pi, sigma, mue, gt_normalized):
+        """
+        Returns both highest probability and best-of-N predictions
+        
+        Args:
+            pi (torch.Tensor): Mixture weights (batch_size, seq_len, n_mixtures)
+            sigma (torch.Tensor): Standard deviations
+            mue (torch.Tensor): Means (batch_size, seq_len, n_mixtures, 2)
+            gt_normalized: Normalized ground truth for best-of-N selection
+            
+        Returns:
+            tuple: (highest_prob_pred, best_of_n_pred)
+        """
+        # 1. Get highest probability predictions
+        max_indices = torch.argmax(pi, dim=2).unsqueeze(-1)
+        highest_prob_pred = torch.gather(mue, dim=2, 
+                                    index=max_indices.unsqueeze(dim=-1).repeat(1, 1, 1, 2))
+        highest_prob_pred = highest_prob_pred.squeeze(dim=2)
+        
+        # 2. Get best-of-N predictions
+        batch_size, seq_len, n_mixtures, _ = mue.shape
+        best_of_n_pred = torch.zeros_like(highest_prob_pred)
+        
+        for b in range(batch_size):
+            for t in range(seq_len):
+                errors = []
+                for k in range(n_mixtures):
+                    pred = mue[b, t, k]
+                    error = torch.norm(pred - gt_normalized[b, t])
+                    errors.append(error)
+                
+                best_k = torch.argmin(torch.tensor(errors))
+                best_of_n_pred[b, t] = mue[b, t, best_k]
+        
+        return highest_prob_pred, best_of_n_pred
     
     
     def _bivariate(self,pi,sigma_x,sigma_y, mu_x , mu_y,input):
 
         # Check the num of dims
         if input.ndim ==3:
-            x = input[:,:,0].to(self.config.device)
-            y = input[:,:,1].to(self.config.device)
-            x = x.unsqueeze(-1).to(self.config.device)
-            y = y.unsqueeze(-1).to(self.config.device)
+            x = input[:,:,0]
+            y = input[:,:,1]
+            x = x.unsqueeze(-1)
+            y = y.unsqueeze(-1)
             #print("Num of Dims is 3 : ",input.shape)
         elif input.ndim ==2:
             x = input[:,0]
             y = input[:,1]
-            x = x.unsqueeze(dim=1).to(self.config.device)
-            y = y.unsqueeze(dim=1).to(self.config.device)
+            x = x.unsqueeze(dim=1)
+            y = y.unsqueeze(dim=1)
             # print("Num of Dims is 2 : ",input.shape)
         # make |mu|=K copies of y, subtract mu, divide by sigma
         #print("Input: ",input.shape ,"\nX: ",x.shape,"\nY: ",y.shape,"\nMu_x : ",mu_x.shape,"\nMu_y : ",mu_y.shape,"\nSigma_x : ",sigma_x.shape)
@@ -563,6 +658,8 @@ class AttentionGMM(nn.Module):
             optimizer_betas=self.optimizer_betas,
             optimizer_eps=self.optimizer_eps
         )
+
+        
         if verbose:
             print('Training Settings:')
             print(f"Train batch size: {args.batch_size}")
@@ -570,12 +667,6 @@ class AttentionGMM(nn.Module):
 
         mean = mean.to(args.device)
         std = std.to(args.device)
-        criterion = nn.MSELoss()
-        
-        # Initialize tracking
-        train_losses, test_losses = [], []
-        train_ades, test_ades = [], []
-        train_fdes, test_fdes = [], []
 
         # Set up directory structure
         models_dir = os.path.join(save_path, 'pretrained_models')
@@ -583,11 +674,11 @@ class AttentionGMM(nn.Module):
         os.makedirs(models_dir, exist_ok=True)
         os.makedirs(metrics_dir, exist_ok=True)
 
+        # Initialize metric tracker here
+        tracker = MetricTracker()
+
         self.train()
         for epoch in range(epochs):
-            epoch_loss = 0
-            epoch_ade = 0
-            epoch_fde = 0
             self.train()  # Set train mode again for safety
 
             # Training loop with progress bar
@@ -644,38 +735,46 @@ class AttentionGMM(nn.Module):
                 optimizer.step_and_update_lr()
 
                 with torch.no_grad(): # to avoid data leakage during sampling
-                    sample_preds = self._sample_max_component_mean(pi, sigmas, mus)
+                    # sample_preds = self._sample_max_component_mean(pi, sigmas, mus)
+                    highest_prob_pred, best_of_n_pred = self._sample_gmm_predictions(pi, sigmas, mus,target)
                     # Calculate metrics
                     obs_last_pos = obs_tensor[:, -1:, 0:2]
+
+                    # # using heighest probability values
                     mad, fad = self.calculate_metrics(
-                        sample_preds.detach(), target, obs_last_pos,
+                        highest_prob_pred.detach(), target, obs_last_pos,
+                        True, mean, std, args.device
+                    ) 
+                    
+                    # Best of n_predictions error
+                    mad_best_n, fad_best_n = self.calculate_metrics(
+                        best_of_n_pred.detach(), target, obs_last_pos,
                         True, mean, std, args.device
                     )
-                    
-                    # Update epoch metrics
-                    epoch_loss += train_loss.item()
-                    epoch_ade += mad
-                    epoch_fde += fad
-                    
-                    # Update progress bar
+                   
+                    # Update metrics using tracker
+                    batch_metrics = {
+                        'loss': train_loss.item(),
+                        'ade': mad,
+                        'fde': fad,
+                        'best_ade': mad_best_n,
+                        'best_fde': fad_best_n
+                    }
+                    tracker.update(batch_metrics, obs_tensor.shape[0], phase='train')      
+                    #Update progress bar
                     if verbose:
+                        train_avgs = tracker.get_averages('train')
                         load_train.set_postfix({
-                            'loss': f"{train_loss.item():.4f}",
-                            'ADE': f"{mad:.4f}",
-                            'FDE': f"{fad:.4f}"
+                            'loss': f"{train_avgs['loss']:.4f}",
+                            'ADE': f"{train_avgs['ade']:.4f}",
+                            'FDE': f"{train_avgs['fde']:.4f}",
+                            'Best_ADE': f"{train_avgs['best_ade']:.4f}",
+                            'Best_FDE': f"{train_avgs['best_fde']:.4f}"
                         })
 
-                # Calculate average training metrics
-                avg_train_loss = epoch_loss / len(train_dl)
-                avg_train_ade = epoch_ade / len(train_dl)
-                avg_train_fde = epoch_fde / len(train_dl)
-            
+
             # Test evaluation
             self.eval()
-            test_loss = 0
-            test_ade = 0
-            test_fde = 0
-            
             with torch.no_grad():
                 for batch in test_dl:
                     obs_tensor, target_tensor = batch
@@ -686,8 +785,6 @@ class AttentionGMM(nn.Module):
                     updated_enq_length = input.shape[1]
                     target = (target_tensor[:,:,2:4] - mean[2:])/std[2:]
 
-                    # tgt = torch.zeros_like(target).to(args.device)
-                    # tgt[:, 1:, :] = target[:, :-1, :]
 
                     tgt = torch.Tensor([0, 0]).unsqueeze(0).unsqueeze(1).repeat(target.shape[0],dec_seq_len,1).to(args.device)
 
@@ -702,97 +799,75 @@ class AttentionGMM(nn.Module):
                     sigmas = torch.cat((sigma_x.unsqueeze(-1),sigma_y.unsqueeze(-1)),-1)
 
                     # Sample_pred
-                    test_sample_preds = self._sample_max_component_mean(pi, sigmas, mus)
+                    highest_prob_pred, best_of_n_pred = self._sample_gmm_predictions(pi, sigmas, mus,target)
+                    # test_sample_preds = self._sample_max_component_mean(pi, sigmas, mus)
                     
                     # Calculate metrics
                     loss = self._mdn_loss_fn(pi, sigma_x,sigma_y, mu_x , mu_y,target,self.config.n_gaussians)
                     obs_last_pos = obs_tensor[:, -1:, 0:2]
-                    mad, fad = self.calculate_metrics(
-                        test_sample_preds, target, obs_last_pos,
+                    ade, fde = self.calculate_metrics(
+                        highest_prob_pred, target, obs_last_pos,
                         True, mean, std, args.device
                     )
-                    
-                    test_loss += loss.item()
-                    test_ade += mad
-                    test_fde += fad
 
-            # Average test metrics
-            avg_test_loss = test_loss / len(test_dl)
-            avg_test_ade = test_ade / len(test_dl)
-            avg_test_fde = test_fde / len(test_dl)
+                    ade_best_n, fde_best_n = self.calculate_metrics(
+                        best_of_n_pred, target, obs_last_pos,
+                        True, mean, std, args.device
+                    )
+                    # ade_best_n, fde_best_n,ade, fde  = 0, 0,0,0
+                    batch_metrics = {
+                                'loss': loss.item(),
+                                'ade': ade,
+                                'fde': fde,
+                                'best_ade': ade_best_n,
+                                'best_fde': fde_best_n
+                            }
+                    tracker.update(batch_metrics, obs_tensor.shape[0], phase='test')
 
-            # Save metrics
-            train_losses.append(avg_train_loss)
-            test_losses.append(avg_test_loss)
-            train_ades.append(avg_train_ade)
-            test_ades.append(avg_test_ade)
-            train_fdes.append(avg_train_fde)
-            test_fdes.append(avg_test_fde)
+            # Print epoch metrics
+            tracker.print_epoch_metrics(epoch, epochs, verbose)
 
-            if verbose:
-                print(f"\nEpoch {epoch+1}/{epochs}")
-                print(f"Train - Loss: {avg_train_loss:.4f}, ADE: {avg_train_ade:.4f}, FDE: {avg_train_fde:.4f}")
-                print(f"Test  - Loss: {avg_test_loss:.4f}, ADE: {avg_test_ade:.4f}, FDE: {avg_test_fde:.4f}")
-
-            # Save model if requested
             if save_model and (epoch + 1) % save_frequency == 0:
-                # Move model to CPU
-                model_cpu = self.to('cpu')
-
-                # Create model state dictionary
                 model_state = {
-                    'model_state_dict': model_cpu.state_dict(),
+                    'model_state_dict': self.state_dict(),  # Save directly
                     'optimizer_state_dict': optimizer._optimizer.state_dict(),
-                    'training_history': {
-                        'train_losses': train_losses,
-                        'test_losses': test_losses,
-                        'train_ades': train_ades,
-                        'test_ades': test_ades,
-                        'train_fdes': train_fdes,
-                        'test_fdes': test_fdes
-                    },
+                    'training_history': tracker.history,
+                    'best_metrics': tracker.best_metrics,
                     'train_mean': mean,
                     'train_std': std,
                     'model_config': {
+                        # Only save what you actually use for loading
                         'in_features': self.input_features,
                         'out_features': self.output_features,
                         'num_heads': self.num_heads,
                         'num_encoder_layers': self.config.num_encoder_layers,
                         'num_decoder_layers': self.config.num_decoder_layers,
                         'embedding_size': self.d_model,
-                        'dropout': self.dropout_encoder,
-                        'max_length': self.max_len,
-                        'batch_first': True,
-                        'actn': self.config.actn
+                        'dropout': self.dropout_encoder
                     }
                 }
-
+                # torch.save(model_state, os.path.join(models_dir, checkpoint_name))
                 # Save the model
                 checkpoint_name = args.checkpoint
                 os.makedirs(save_path, exist_ok=True)
-                torch.save(model_state, os.path.join(save_path, f"{checkpoint_name}"))
-                print("saving checkpoint at : ", os.path.join(save_path, f"{checkpoint_name}"))
-                
-                # Move model back to device
-                self.to(args.device)
-        # Plot training history
+                torch.save(model_state, os.path.join(models_dir, f"{checkpoint_name}"))
+                print("saving checkpoint at : ", os.path.join(models_dir, f"{checkpoint_name}"))
+
+
+            # Reset metrics for next epoch
+            tracker.reset('train')
+            tracker.reset('test')
+        # Plot training history if verbose
         if verbose:
             self.plot_metrics(
-                train_losses, test_losses,
-                train_ades, test_ades,
-                train_fdes, test_fdes,
-                enc_seq_len, dec_seq_len,batch_size,
+                tracker.history['train_loss'], tracker.history['test_loss'],
+                tracker.history['train_ade'], tracker.history['test_ade'],
+                tracker.history['train_fde'], tracker.history['test_fde'],
+                enc_seq_len, dec_seq_len, batch_size,
                 save_path=metrics_dir
             )
 
-        # Return model and history
-        history = {
-            'train_losses': train_losses, 'test_losses': test_losses,
-            'train_ades': train_ades, 'test_ades': test_ades,
-            'train_fdes': train_fdes, 'test_fdes': test_fdes
-        }
-        
-        return self, history
+        return self, tracker.history
 
     @staticmethod
     def calculate_metrics(pred: torch.Tensor, target: torch.Tensor, obs_last_pos: torch.Tensor, 
@@ -935,28 +1010,53 @@ class AttentionGMM(nn.Module):
             # memory_mask=src_mask
         )
         
+        # # Compute embeddings
+        # sigma_embedded = self.embedding_sigma(decoder_output)
+        # mue_embedded = self.embedding_mue(decoder_output)
+        
+        # # Mixture weights (apply softmax)
+        # pi = torch.softmax(self.pis(decoder_output), dim=-1)
 
-        sigmax_embeded = self.embedding_sigma(decoder_output)
-        sigmay_embeded = self.embedding_sigma(decoder_output)
-        muex_embeded = self.embedding_mue(decoder_output)
-        muey_embeded = self.embedding_mue(decoder_output)
 
-        # Calculate PI
-        pi = self.pis(decoder_output)
-        pi = nn.functional.softmax(pi, -1)
+        # Compute embeddings
+        sigma_embedded = self.embedding_sigma(decoder_output)
+        mue_embedded = self.embedding_mue(decoder_output)
+        pi_embedded = self.embedding_pi(decoder_output)  # <-- Apply embedding to pi
 
-        # Calculate Sigmas
-        sigma_x = torch.Tensor(torch.exp(self.sigma_x(sigmax_embeded)))
-        sigma_y = torch.Tensor(torch.exp(self.sigma_x(sigmay_embeded)))
+        
+        # Mixture weights (apply softmax)
+        # pi = torch.softmax(self.pis(pi_embedded), dim=-1)
+        pi = torch.softmax(self.pis_head(pi_embedded), dim=-1)
+        
+        # Compute Sigmas with softplus to ensure positivity
+        sigma = nn.functional.softplus(self.sigma_head(sigma_embedded))
+        sigma_x, sigma_y = sigma.chunk(2, dim=-1)
+        
+        # Compute Means
+        mu = self.mu_head(mue_embedded)
+        mu_x, mu_y = mu.chunk(2, dim=-1)
 
-        mu_x = torch.Tensor(self.mu_x(muex_embeded))
-        mu_y = torch.Tensor(self.mu_y(muey_embeded))
+        # sigmax_embeded = self.embedding_sigma(decoder_output)
+        # sigmay_embeded = self.embedding_sigma(decoder_output)
+        # muex_embeded = self.embedding_mue(decoder_output)
+        # muey_embeded = self.embedding_mue(decoder_output)
+
+        # # Calculate PI
+        # pi = self.pis(decoder_output)
+
+        # # Calculate Sigmas
+        # # sigma_x = torch.exp(self.sigma_x(sigmax_embeded))
+        # # sigma_y = torch.exp(self.sigma_y(sigmay_embeded))
+        # sigma_x = nn.functional.softplus(self.sigma_x(sigmax_embeded))
+        # sigma_y = nn.functional.softplus(self.sigma_y(sigmay_embeded))
+
+
+        # mu_x = self.mu_x(muex_embeded)
+        # mu_y = self.mu_y(muey_embeded)
       
         
         return pi, sigma_x,sigma_y, mu_x ,mu_y,decoder_output
   
-
-
 
 
 class Embeddings(nn.Module):
