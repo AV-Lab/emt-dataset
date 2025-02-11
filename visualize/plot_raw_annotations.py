@@ -22,11 +22,17 @@ objects = set(['Car', 'Bus', 'Motorbike', 'Large_vehicle', 'Medium_vehicle', 'Em
 
 def process_frame(frame, ann):
     for inst in ann[0]['instances']:    
-        bbox = inst['contour']['points']
+        points = inst['contour']['points']
         event = [inst['classValues'][0]['value'], inst['classValues'][1]['value'], inst['classValues'][2]['value']] # agent, action, landmark
         
-        start_point = (int(bbox[0]['x']), int(bbox[0]['y']))
-        end_point = (int(bbox[2]['x']), int(bbox[2]['y']))
+        bbox_left = min(point["x"] for point in points)
+        bbox_top = min(point["y"] for point in points)
+        bbox_right = max(point["x"] for point in points)
+        bbox_bottom = max(point["y"] for point in points)
+
+        bbox = (bbox_left, bbox_top, bbox_right, bbox_bottom)
+        start_point = (int(bbox[0]), int(bbox[1]))
+        end_point = (int(bbox[2]), int(bbox[3]))
         image = cv2.rectangle(frame, start_point, end_point, (0, 255, 0), 2) 
         
         for j, label in enumerate(event):

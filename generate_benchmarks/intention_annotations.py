@@ -144,12 +144,12 @@ def is_object_moving(bounding_boxes, threshold=1.0):
     return any(distance > threshold for distance in distances)
 
 def generate_intention_annotations(raw_annotations, intention_annotations_path):
+    last_id = 1
+    total_seq = 0
     for ann in raw_annotations:
         files = sorted(os.listdir(ann))
         prediction_labels = {} 
-        last_id = 1
-        
-        
+                
         for file in files: 
             file_path = os.path.join(ann, file)
             if os.path.isfile(file_path) and file.endswith(".json"):
@@ -190,11 +190,11 @@ def generate_intention_annotations(raw_annotations, intention_annotations_path):
                     
                     # Extract bounding box points
                     points = instance["contour"]["points"]
+
                     bbox_left = min(point["x"] for point in points)
                     bbox_top = min(point["y"] for point in points)
                     bbox_right = max(point["x"] for point in points)
                     bbox_bottom = max(point["y"] for point in points)
-                    
                     
                     prediction_labels[(track_id, agent)]['bbox'].append((bbox_left, bbox_top, bbox_right, bbox_bottom))
                     prediction_labels[(track_id, agent)]['frames'].append(int(frame_id))
@@ -203,29 +203,58 @@ def generate_intention_annotations(raw_annotations, intention_annotations_path):
         objects_predictions = {pd['object_id']: {'class': pd['class'], 'frames': pd['frames'], 'bbox': pd['bbox'], 'intention':pd['intention']} for pd in prediction_labels.values()}
         objects_predictions = dict(sorted(objects_predictions.items()))
         
-        # We need to split to make sure that the frames sequence is consequitive and replace intentions for vehicles in   
+        # We need to split to make sure that the frames sequence is consequitive and replace intentions for vehicles in   dynamic_static_map
         split_objects_predictions = {}
-        for k,v in objects_predictions.items():
+        for k, v in objects_predictions.items():
             beg = 0
             first_record = True
-            for idx in range(1, len(v['frames'])):
-                if v['frames'][idx] - v['frames'][idx-1] != 1: # if not consequitive frames
+            for idx in range(1, len(v["frames"])):
+                # If frames are not consecutive
+                if v["frames"][idx] - v["frames"][idx - 1] != 1:
                     if first_record:
                         key = k
+                        first_record = False
                     else:
                         key = last_id
                         last_id += 1
                     
                     mapped_intentions = []
-                    dynamic = is_object_moving(v['bbox'][beg:idx])
-                    
-                    for i in v['intention'][beg:idx]:
+                    dynamic = is_object_moving(v["bbox"][beg:idx])
+                    for i in v["intention"][beg:idx]:
                         if i in dynamic_static_map:
                             i = "lane-keeping" if dynamic else "stopped"
                         mapped_intentions.append(i)
-                            
-                    split_objects_predictions[key] =  {'class': v['class'], 'frames': v['frames'][beg:idx], 'bbox': v['bbox'][beg:idx], 'intention': mapped_intentions}
+        
+                    split_objects_predictions[key] = {
+                        "class": v["class"],
+                        "frames": v["frames"][beg:idx],
+                        "bbox": v["bbox"][beg:idx],
+                        "intention": mapped_intentions
+                    }
                     beg = idx
+        
+            #  Final chunk for [beg : end]
+            if beg < len(v["frames"]):
+                if first_record:
+                    key = k
+                else:
+                    key = last_id
+                    last_id += 1
+        
+                mapped_intentions = []
+                dynamic = is_object_moving(v["bbox"][beg:])
+                for i in v["intention"][beg:]:
+                    if i in dynamic_static_map:
+                        i = "lane-keeping" if dynamic else "stopped"
+                    mapped_intentions.append(i)
+        
+                split_objects_predictions[key] = {
+                    "class": v["class"],
+                    "frames": v["frames"][beg:],
+                    "bbox": v["bbox"][beg:],
+                    "intention": mapped_intentions
+                }
+        
                     
         # filter entries with trajectories less than 20 points
         filtered_objects_predictions = {k:v for k,v in split_objects_predictions.items() if len(v['frames']) >= 20}
@@ -233,13 +262,15 @@ def generate_intention_annotations(raw_annotations, intention_annotations_path):
         # check if there are records with no consequitive frames
         error = 0
         for k, v in filtered_objects_predictions.items():
-            #n = np.sum([1 if isinstance(i, tuple) else 0 for i in v['intention']])
             if not(sorted(v['frames']) == list(range(min(v['frames']), max(v['frames']) + 1))):
                 error += 1
         print(len(filtered_objects_predictions.keys()), error)
         
         file_name = ann.split('/')[-1]
-        save_labels_to_txt(filtered_objects_predictions, intention_annotations_path, file_name)
+        save_labels_to_txt(filtered_objects_predictions, intention_annotations_path, file_name)        
+        total_seq += len(filtered_objects_predictions.keys())
+        
+    print(f"Total sequences: {total_seq}")
         
 
 def main():

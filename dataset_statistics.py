@@ -108,15 +108,8 @@ for ann in annotations:
     ann_file = os.path.join(annot_dir, ann) 
     with open(ann_file, 'r') as file:
         data = json.load(file)
-        for k,v in data.items():
-            intentions = v['intention']
-            prev = intentions[0]
-            total += 1
-            for i in range(1, len(intentions)):
-                cur = intentions[i]
-                if cur != prev:
-                    total += 1
-                    prev = cur
+        total += len(data.keys())
+            
 
 print('Intention Benchmark Statistics:')                    
 print(f'Total number of sequences: {total} \n')

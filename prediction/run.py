@@ -3,7 +3,7 @@
 """
 Created on Sat Sep 28 18:08:42 2024
 
-@author: nadya
+@author: nadya started it but murad messed it up
 """
 
 import os
@@ -13,9 +13,11 @@ import argparse
 import numpy as np
 import json    
 from torch.utils.data import DataLoader
+import torch.cuda as cuda
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from utils import load_meta_data
+
+from utils import load_meta_data, set_seeds
 from utils import generate_prediction_settings
 from utils import generate_intention_settings
 
@@ -24,16 +26,21 @@ from dataloaders.seq_loader import SeqDataset
 from dataloaders.frame_loader import GNNDataset
 from models.rnn import RNNPredictor
 from models.gnn import GCNPredictor, GATPredictor
+from models.transformer_model import TransformerPredictor
+import torch
+import torch.nn as nn
 
 gnn_predictors = set(["gcn", "gat"])
 
-def create_predictor(past_trajectory, future_trajectory, max_nodes, predictor):
+def create_predictor(past_trajectory, future_trajectory, max_nodes, predictor, device, normalize, checkpoint_file):
     if predictor == "gcn":
-        return GCNPredictor(past_trajectory, future_trajectory, max_nodes)
+        return GCNPredictor(past_trajectory, future_trajectory, max_nodes, device, normalize, checkpoint_file)
     elif predictor == "gat":
-        return GATPredictor(past_trajectory, future_trajectory, max_nodes) 
+        return GATPredictor(past_trajectory, future_trajectory, max_nodes, device, normalize, checkpoint_file) 
+    elif predictor == "transformer":
+        return TransformerPredictor(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
     else:
-        return RNNPredictor(past_trajectory, future_trajectory)
+        return RNNPredictor(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
         
 
 def create_dataset(data_folder, predictor, max_nodes, setting="train"):
@@ -53,13 +60,15 @@ if __name__ == '__main__':
     p.add_argument('--window_size', default=1, type=int, help='Sliding window')
     p.add_argument('--max_nodes', type=int, default=40, help='Maximum number of nodes for GNN model')
     p.add_argument('--checkpoint', type=str, default=None, help='Path to model checkpoint file, required if mode is evaluate')
-    p.add_argument('--annotations_path', type=str, default=None, help='If annotations are placed in a location different from recomended')
+    p.add_argument('--annotations_path', type=str, help='If annotations are placed in a location different from recomended')
+    p.add_argument('--num_workers', type=int, default=8, help='Number of workers for dataloader')
+    p.add_argument('--normalize', default=True, type=bool, help='Normalize data, recomended True')
+    p.add_argument('--batch_size', type=int, default=128, help='Batch size')
+    p.add_argument('--device', type=str, default='cuda', help='device to run the model',choices=['cuda', 'cpu'])
+
     args = p.parse_args()
 
-    if args.setting == "evaluate" and not args.checkpoint:
-        print("No checkpoint provided")
-        exit
-        
+
     # Generate setting
     ann_path = "../data/annotations" if not args.annotations_path else args.annotations_path
     prd_ann_path = ann_path + "/prediction_annotations"
@@ -72,13 +81,19 @@ if __name__ == '__main__':
                                                args.window_size, 
                                                generating_setting)
     
-    # Create DataLoaders
+    # Create Dataset
     train_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="train")
     test_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="test")
-    train_loader = DataLoader(train_dataset, batch_size=2, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
-    # Train Predictor 
-    predictor = create_predictor(args.past_trajectory, args.future_trajectory, args.max_nodes, args.predictor)
-    predictor.train(train_loader)
+    # Train and Evaluate Predictor 
+    predictor = create_predictor(args.past_trajectory, 
+                                 args.future_trajectory, 
+                                 args.max_nodes, 
+                                 args.predictor, 
+                                 args.device,
+                                 args.normalize,
+                                 args.checkpoint)
+    predictor.train(train_loader) 
     predictor.evaluate(test_loader)
