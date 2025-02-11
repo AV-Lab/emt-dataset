@@ -27,28 +27,58 @@ from dataloaders.frame_loader import GNNDataset
 from models.rnn import RNNPredictor
 from models.gnn import GCNPredictor, GATPredictor
 from models.transformer_model import TransformerPredictor
+from models.transformer import AttentionEMT
+from models.tranformer_GMM import AttentionGMM
 import torch
 import torch.nn as nn
 
 gnn_predictors = set(["gcn", "gat"])
 
 def create_predictor(past_trajectory, future_trajectory, max_nodes, predictor, device, normalize, checkpoint_file):
+    """
+    Initializes and returns the appropriate predictor model based on the specified type.
+    
+    Args:
+        past_trajectory (int): Number of past timesteps used for prediction.
+        future_trajectory (int): Number of future timesteps to predict.
+        max_nodes (int): Maximum number of nodes for GNN-based models.
+        predictor (str): The type of predictor to initialize ('gcn', 'gat', 'transformer', etc.).
+        device (str): Device on which the model should run ('cuda' or 'cpu').
+        normalize (bool): Whether to normalize input features.
+        checkpoint_file (str): Path to a checkpoint file if loading a pre-trained model.
+
+    Returns:
+        Model instance of the specified predictor type.
+    """
     if predictor == "gcn":
         return GCNPredictor(past_trajectory, future_trajectory, max_nodes, device, normalize, checkpoint_file)
     elif predictor == "gat":
         return GATPredictor(past_trajectory, future_trajectory, max_nodes, device, normalize, checkpoint_file) 
-    elif predictor == "transformer":
-        return TransformerPredictor(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
+    elif predictor == 'transformer':
+        return AttentionEMT(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
+    elif predictor == 'transformer-gmm':
+        return AttentionGMM(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
     else:
         return RNNPredictor(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
         
 
 def create_dataset(data_folder, predictor, max_nodes, setting="train"):
-    if predictor in gnn_predictors:
-        return GNNDataset(data_folder, max_nodes, setting = setting)
-    else:
-        return SeqDataset(data_folder, setting = setting)
+    """
+    Initializes and returns the appropriate dataset based on the predictor type.
+    
+    Args:
+        data_folder (str): Path to the folder containing dataset files.
+        predictor (str): The type of predictor to determine dataset type ('gcn', 'gat', etc.).
+        max_nodes (int): Maximum number of nodes for GNN-based datasets.
+        setting (str): Dataset mode ('train' or 'test').
 
+    Returns:
+        Dataset instance of the appropriate type.
+    """
+    if predictor in gnn_predictors:
+        return GNNDataset(data_folder, max_nodes, setting=setting)
+    else:
+        return SeqDataset(data_folder, setting=setting)
 
 
 if __name__ == '__main__':
@@ -59,16 +89,20 @@ if __name__ == '__main__':
     p.add_argument('setting', type=str, choices=['train', 'evaluate'], help='Execution mode (train or evaluate)')
     p.add_argument('--window_size', default=1, type=int, help='Sliding window')
     p.add_argument('--max_nodes', type=int, default=40, help='Maximum number of nodes for GNN model')
+    p.add_argument('--predictor', type=str, default='transformer-gmm', choices=['lstm', 'gcn', 'gat', 'transformer','transformer-gmm'], help='Predictor type')
+    p.add_argument('--setting', type=str, default='train',choices=['train', 'evaluate'], help='Execution mode (train or evaluate)')
     p.add_argument('--checkpoint', type=str, default=None, help='Path to model checkpoint file, required if mode is evaluate')
-    p.add_argument('--annotations_path', type=str, help='If annotations are placed in a location different from recomended')
+    p.add_argument('--annotations_path', type=str, help='If annotations are placed in a location different from recommended')
     p.add_argument('--num_workers', type=int, default=8, help='Number of workers for dataloader')
-    p.add_argument('--normalize', default=True, type=bool, help='Normalize data, recomended True')
+    p.add_argument('--normalize', default=True, type=bool, help='Normalize data, recommended True')
     p.add_argument('--batch_size', type=int, default=128, help='Batch size')
-    p.add_argument('--device', type=str, default='cuda', help='device to run the model',choices=['cuda', 'cpu'])
+    p.add_argument('--device', type=str, default='cuda', help='Device to run the model',choices=['cuda', 'cpu'])
+    p.add_argument('--seed', type=int, default=42, help='Seed for reproducibility -> set zero for random seed generation')
 
     args = p.parse_args()
-
-
+    
+    set_seeds(int(args.seed))
+    
     # Generate setting
     ann_path = "../data/annotations" if not args.annotations_path else args.annotations_path
     prd_ann_path = ann_path + "/prediction_annotations"

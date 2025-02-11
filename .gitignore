@@ -4,3 +4,6 @@ data/
 temp/
 # Python cache files
 **/__pycache__/
+
+prediction/results/
+test.ipynb

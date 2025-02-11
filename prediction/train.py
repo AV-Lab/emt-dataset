@@ -217,8 +217,22 @@ def train_attn(args, train_dl, test_dl, model=None, optim=None, epochs=100,
                 updated_enq_length = input.shape[1]
                 target = (target_tensor[:,:,2:4] - mean[2:])/std[2:]
 
+                # tgt = torch.zeros_like(target).to(args.device)
+                # tgt[:, 1:, :] = target[:, :-1, :]
+
+
+                # Initialize first decoder input as zeros
                 tgt = torch.zeros_like(target).to(args.device)
-                tgt[:, 1:, :] = target[:, :-1, :]
+        
+                # Autoregressive generation
+                for t in range(target.shape[1]-1):
+                    tgt_mask = generate_square_mask(dim_trg=dec_seq_len, 
+                                                dim_src=updated_enq_length, 
+                                                mask_type="tgt").to(args.device)
+                    
+                    pred = model(input, tgt, tgt_mask=tgt_mask)
+                    # Use the current prediction as input for next timestep
+                    tgt[:, t+1, :] = pred[:, t, :]
 
                 tgt_mask = generate_square_mask(dim_trg=dec_seq_len, 
                                               dim_src=updated_enq_length, 
