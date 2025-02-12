@@ -232,6 +232,8 @@ def generate_seq_setting(past_trajectory, future_trajectory, data_file, anns, in
                         trajectories.append([observation, target, intentions])
                     else:
                         trajectories.append([observation, target])
+                        
+    print(f"Size of dataset: {len(trajectories)}")
     
     with open(data_file, 'wb') as f:
         pickle.dump(trajectories, f)

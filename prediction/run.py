@@ -26,7 +26,6 @@ from dataloaders.seq_loader import SeqDataset
 from dataloaders.frame_loader import GNNDataset
 from models.rnn import RNNPredictor
 from models.gnn import GCNPredictor, GATPredictor
-from models.transformer_model import TransformerPredictor
 from models.transformer import AttentionEMT
 from models.tranformer_GMM import AttentionGMM
 import torch
@@ -86,7 +85,6 @@ if __name__ == '__main__':
     p.add_argument('past_trajectory', type=int, help='Past Trajectory')
     p.add_argument('future_trajectory', type=int, help='Prediction Horizon')
     p.add_argument('predictor', type=str, choices=['lstm', 'gcn', 'gat', 'transformer', 'transformer_gmm'], help='Predictor type')
-    p.add_argument('setting', type=str, choices=['train', 'evaluate'], help='Execution mode (train or evaluate)')
     p.add_argument('--window_size', default=1, type=int, help='Sliding window')
     p.add_argument('--max_nodes', type=int, default=40, help='Maximum number of nodes for GNN model')
     p.add_argument('--predictor', type=str, default='transformer-gmm', choices=['lstm', 'gcn', 'gat', 'transformer','transformer-gmm'], help='Predictor type')
@@ -116,18 +114,18 @@ if __name__ == '__main__':
                                                generating_setting)
     
     # Create Dataset
-    train_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="train")
-    test_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="test")
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    #train_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="train")
+    #test_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="test")
+    #train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
+    #test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     # Train and Evaluate Predictor 
-    predictor = create_predictor(args.past_trajectory, 
-                                 args.future_trajectory, 
-                                 args.max_nodes, 
-                                 args.predictor, 
-                                 args.device,
-                                 args.normalize,
-                                 args.checkpoint)
-    predictor.train(train_loader) 
-    predictor.evaluate(test_loader)
+    #predictor = create_predictor(args.past_trajectory, 
+    #                             args.future_trajectory, 
+    #                             args.max_nodes, 
+    #                             args.predictor, 
+    #                             args.device,
+    #                             args.normalize,
+    #                             args.checkpoint)
+    #predictor.train(train_loader) 
+    #predictor.evaluate(test_loader)
