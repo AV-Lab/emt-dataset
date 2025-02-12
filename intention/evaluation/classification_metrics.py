@@ -29,12 +29,9 @@ def compute_precision_recall_f1(preds, targets, num_classes):
     # Flatten predictions to a 1D array
     preds_flat = preds.view(-1).cpu().numpy()
 
-    # If targets are one-hot, convert them to class indices:
-    # (batch_size, target_len, num_classes) -> (batch_size, target_len)
     if targets.ndim == 3:
         targets_flat = targets.argmax(dim=-1).view(-1).cpu().numpy()
     else:
-        # Otherwise assume targets are already class indices
         targets_flat = targets.view(-1).cpu().numpy()
 
     # Overall (weighted) metrics

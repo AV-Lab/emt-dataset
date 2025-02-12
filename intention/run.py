@@ -70,7 +70,7 @@ if __name__ == '__main__':
     p.add_argument('--num_workers', type=int, default=8, help='Number of workers for the DataLoader')
     p.add_argument('--normalize', default=False, type=bool, help='Normalize input data')
     p.add_argument('--batch_size', type=int, default=128, help='Batch size for training/testing')
-    p.add_argument('--device', type=str, default='cuda:1', choices=['cuda', 'cpu'], help='Device to run the model on')
+    p.add_argument('--device', type=str, default='cuda:0', choices=['cuda', 'cpu'], help='Device to run the model on')
     args = p.parse_args()
         
     ann_path = "../data/annotations" if not args.annotations_path else args.annotations_path
@@ -93,51 +93,68 @@ if __name__ == '__main__':
     
     else:
         num_folds = 5  
-        data_folder = generate_intention_cross_validation_settings(args.past_trajectory, args.future_trajectory, annotations, n_splits=num_folds)
+        data_folder = generate_intention_cross_validation_settings(
+            args.past_trajectory, args.future_trajectory, annotations, n_splits=num_folds
+        )
         
-        overall_precisions, overall_recalls, overall_f1s = [], [], []
-        per_class_precisions, per_class_recalls, per_class_f1s = [], [], []
+        # Lists for storing metrics for each fold.
+        f1_all_overall_list   = []  # F1 over all tokens (macro overall)
+        f1_last_overall_list  = []  # F1 for last token (macro overall)
+        lev_distance_list     = []  # Normalized Levenshtein distance
+        
+        f1_all_per_class_list  = []  # Per-class F1 over all tokens
+        f1_last_per_class_list = []  # Per-class F1 for last token
         
         for fold_idx in range(num_folds):
             fold_path = os.path.join(data_folder, f"fold_{fold_idx}")
-    
+        
             train_dataset = create_dataset(fold_path, args.model_setting, setting="train")
-            test_dataset = create_dataset(fold_path, args.model_setting, setting="test")
-            train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
-            test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+            test_dataset  = create_dataset(fold_path, args.model_setting, setting="test")
+            print("reached")
+            train_loader  = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
+            test_loader   = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
             
-            predictor = create_predictor(args.past_trajectory, args.future_trajectory, args.model_setting, args.device, args.normalize, args.checkpoint)
+            predictor = create_predictor(
+                args.past_trajectory, args.future_trajectory,
+                args.model_setting, args.device, args.normalize, args.checkpoint
+            )
             
             predictor.train(train_loader)
-    
-            precision_overall, recall_overall, f1_overall, precision_per_class_fold, recall_per_class_fold, f1_per_class_fold = predictor.evaluate(test_loader)
+            metrics = predictor.evaluate(test_loader)
             
-            overall_precisions.append(precision_overall)
-            overall_recalls.append(recall_overall)
-            overall_f1s.append(f1_overall)
+            f1_all_overall_list.append(metrics["f1_all_overall"])
+            f1_last_overall_list.append(metrics["f1_last_overall"])
+            lev_distance_list.append(metrics["avg_norm_lev_distance"])
             
-            per_class_precisions.append(precision_per_class_fold)
-            per_class_recalls.append(recall_per_class_fold)
-            per_class_f1s.append(f1_per_class_fold)
+            f1_all_per_class_list.append(metrics["f1_all_per_class"])
+            f1_last_per_class_list.append(metrics["f1_last_per_class"])
         
-        mean_precision_overall = sum(overall_precisions) / num_folds
-        mean_recall_overall = sum(overall_recalls) / num_folds
-        mean_f1_overall = sum(overall_f1s) / num_folds
+        # Compute mean metrics over folds.
+        mean_f1_all_overall  = sum(f1_all_overall_list) / num_folds
+        mean_f1_last_overall = sum(f1_last_overall_list) / num_folds
+        mean_lev_distance    = sum(lev_distance_list) / num_folds
         
-        if len(per_class_precisions) > 0:
-            num_classes = len(per_class_precisions[0])
-            avg_precision_per_class = [sum(fold[class_idx] for fold in per_class_precisions) / num_folds for class_idx in range(num_classes)]
-            avg_recall_per_class = [sum(fold[class_idx] for fold in per_class_recalls) / num_folds for class_idx in range(num_classes)]
-            avg_f1_per_class = [sum(fold[class_idx] for fold in per_class_f1s) / num_folds for class_idx in range(num_classes)]
-        else:
-            avg_precision_per_class = []
-            avg_recall_per_class = []
-            avg_f1_per_class = []
+        num_classes = len(f1_all_per_class_list[0])
+        avg_f1_all_per_class  = [
+            sum(fold[i] for fold in f1_all_per_class_list) / num_folds
+            for i in range(num_classes)
+        ]
+        avg_f1_last_per_class = [
+            sum(fold[i] for fold in f1_last_per_class_list) / num_folds
+            for i in range(num_classes)
+        ]
         
+        # Print cross-validation results.
         print("===== 5-Fold Cross Validation Results =====")
-        print(f"Mean Overall Precision: {mean_precision_overall:.4f}")
-        print(f"Mean Overall Recall:    {mean_recall_overall:.4f}")
-        print(f"Mean Overall F1:        {mean_f1_overall:.4f}\n")
+        print(f"Mean F1 (All Timestamps) Overall (Macro): {mean_f1_all_overall:.4f}")
+        print(f"Mean F1 (Last Token) Overall (Macro):     {mean_f1_last_overall:.4f}")
+        print(f"Mean Normalized Levenshtein Distance:       {mean_lev_distance:.4f}\n")
         
-        for i, (p, r, f) in enumerate(zip(avg_precision_per_class, avg_recall_per_class, avg_f1_per_class)):
-            print(f"[Class {i}] Precision: {p:.4f}, Recall: {r:.4f}, F1: {f:.4f}")
+        print("Per-Class F1 (All Timestamps, Macro):")
+        for i, f1_val in enumerate(avg_f1_all_per_class):
+            print(f"  [Class {i}]: F1: {f1_val:.4f}")
+        
+        print("\nPer-Class F1 (Last Token, Macro):")
+        for i, f1_val in enumerate(avg_f1_last_per_class):
+            print(f"  [Class {i}]: F1: {f1_val:.4f}")
+

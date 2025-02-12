@@ -7,6 +7,8 @@ import os
 from torch.utils.data import Dataset, DataLoader
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from evaluation.classification_metrics import compute_precision_recall_f1
+from evaluation.distance_metrics import compute_intention_and_distance_metrics
+from constants import LABEL_TO_CLASS
 
 
 class RNNAutoregressivePredictor:
@@ -160,29 +162,24 @@ class RNNAutoregressivePredictor:
         all_preds = torch.cat(all_preds, dim=0)
         all_targets = torch.cat(all_targets, dim=0)
 
-        # After gathering all_preds and all_targets
-        (precision_overall, 
-         recall_overall, 
-         f1_overall, 
-         precision_per_class, 
-         recall_per_class, 
-         f1_per_class) = compute_precision_recall_f1(all_preds, all_targets, self.num_classes)
-    
-        # Then you can log/print them as you wish:
-        print("Overall Precision: ", precision_overall)
-        print("Overall Recall   : ", recall_overall)
-        print("Overall F1       : ", f1_overall)
-    
+        metrics = compute_intention_and_distance_metrics(all_preds, all_targets, self.num_classes)
+        
+        print("F1 (All Timestamps) Overall (Macro):", metrics["f1_all_overall"])
+        print("F1 (All Timestamps) Per Class:")
         for c in range(self.num_classes):
-            print(f"[Class {c}] "
-                  f"Precision: {precision_per_class[c]:.4f}, "
-                  f"Recall: {recall_per_class[c]:.4f}, "
-                  f"F1: {f1_per_class[c]:.4f}")
+            print(f"  [Class {c}]: {metrics['f1_all_per_class'][c]:.4f}")
+        
+        print("F1 (Last Token) Overall (Macro):", metrics["f1_last_overall"])
+        print("F1 (Last Token) Per Class:")
+        for c in range(self.num_classes):
+            print(f"  [Class {c}]: {metrics['f1_last_per_class'][c]:.4f}")
+        
+        print("Average Normalized Levenshtein Distance:", metrics["avg_norm_lev_distance"])
         
         avg_loss = total_loss / len(loader)
         print(f"Test Loss: {avg_loss:.4f}")
         
-        return (precision_overall, recall_overall, f1_overall, precision_per_class, recall_per_class, f1_per_class) 
+        return metrics
     
     def save_checkpoint(self):
         checkpoint = {
@@ -196,37 +193,47 @@ class RNNAutoregressivePredictor:
         torch.save(checkpoint, "rnn_intention_model_autoregeressive.pth")
         print("Model checkpoint saved")
 
-    def predict(self, input_trajectory):
+
+    def predict(self, input_trajectories):
         """
-        Predicts the future intentions given an absolute trajectory.
+        Predicts future intentions for multiple objects given their absolute trajectories.
     
         Args:
-            input_trajectory (list of tuples): Observed absolute trajectory [(x1, y1), (x2, y2), ...]
+            input_trajectories (list of lists of tuples): Observed absolute trajectories for multiple objects.
+            Each object has a trajectory [(x1, y1), (x2, y2), ...], and trajectories may have different lengths.
     
         Returns:
-            Tensor: Predicted class indices of shape (decode_len,)
+            Tensor: Predicted class indices of shape (num_objects, target_len).
         """
         self.model.eval()
-        
-        input_trajectory = torch.tensor(input_trajectory, dtype=torch.float32, device=self.device)
-        if input_trajectory.shape[0] == 1:
-            return torch.zeros(self.target_len, dtype=torch.long, device=self.device)
-        velocities = input_trajectory[1:] - input_trajectory[:-1]
+        processed_velocities = []
     
-        # Pad from the beginning if needed
-        if velocities.shape[0] < self.observation_len - 1:
-            pad_size = self.observation_len - 1 - velocities.shape[0]
-            pad = torch.zeros((pad_size, 2), dtype=torch.float32, device=self.device)
-            velocities = torch.cat([pad, velocities], dim=0)  # Pad before the sequence
-            
-        if self.normalize and self.mean is not None and self.std is not None:
-            velocities = (velocities - self.mean[2:]) / self.std[2:]    
+        for trajectory in input_trajectories:
+            traj_tensor = torch.tensor(trajectory, dtype=torch.float32, device=self.device)
     
-        velocities = velocities.unsqueeze(0)  # Add batch dimension
+            if traj_tensor.shape[0] == 1:
+                processed_velocities.append(torch.zeros((self.observation_len - 1, 2), dtype=torch.float32, device=self.device))
+                continue
+    
+            obs_vel = traj_tensor[1:] - traj_tensor[:-1]
+            if len(obs_vel) < 0:
+                obs_vel = torch.zeros_like(traj_tensor)
+                              
+            if obs_vel.shape[0] < self.observation_len - 1:
+                pad_size = self.observation_len - 1 - obs_vel.shape[0]
+                pad = torch.zeros((pad_size, 2), dtype=torch.float32, device=self.device)
+                obs_vel = torch.cat([pad, obs_vel], dim=0)
+
+            processed_velocities.append(obs_vel)
+
+        velocities_batch = torch.stack(processed_velocities, dim=0)
     
         with torch.no_grad():
-            outputs = self.model(velocities, target_seq=None, teacher_forcing_ratio=0.0)
+            outputs = self.model(velocities_batch, target_seq=None, teacher_forcing_ratio=0.0)
             preds = outputs.argmax(dim=2)  # Get predicted class indices
+        
+        preds = [[LABEL_TO_CLASS[p.item()] for p in pred] for pred in preds]
     
-        return preds.squeeze(0)  # Remove batch dimension, shape: (decode_len,)
+        return preds  # Shape: (num_objects, decode_len)
+
 

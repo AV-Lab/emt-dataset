@@ -9,7 +9,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils import group_annotations_by_frame, compute_frames_idx
 from intention.models.rnn_vanilla import RNNVanillaPredictor
 from intention.models.rnn_autoregressive import RNNAutoregressivePredictor
-from constants import LABEL_TO_CLASS
 
 def compute_intentions_count(annotations_file):
     """
@@ -146,11 +145,11 @@ def plot_predicted_intentions(video_path, intentions, predictor):
         
         if frame_idx in keep_frames:
             predicted_intentions = []
-            for d in intentions[frame_jdx]:
-                if len(d[4]) > 0:
-                    predictions = predictor.predict(d[0])
-                    record = (d[1][-1], d[4][0], LABEL_TO_CLASS[predictions[0].item()])
-                    predicted_intentions.append(record)
+            objects_to_plot = [d for d in intentions[frame_jdx] if len(d[4]) > 0]
+            observed_trajs = [d[0] for d in objects_to_plot]
+            predictions = predictor.predict(observed_trajs)
+            predicted_intentions = [(d[1][-1], d[4][0], pred[0]) for d, pred in zip(objects_to_plot, predictions)]
+            
             frame_jdx += 1
     
             process_frame(frame, predicted_intentions) 
@@ -188,7 +187,7 @@ if __name__ == '__main__':
         if args.checkpoint is None:
             print("To run evaluation, please provide a checkpoint file.")
             exit()
-        predictor = RNNAutoregressivePredictor(args.past_trajectory, 
+        predictor = RNNVanillaPredictor(args.past_trajectory, 
                                                args.future_trajectory, 
                                                args.device, 
                                                args.normalize, 
