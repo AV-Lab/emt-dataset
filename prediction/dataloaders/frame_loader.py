@@ -199,3 +199,4 @@ class GNNDataset(Dataset):
           mask:    (max_nodes,)
         """
         return self.samples[idx]
+

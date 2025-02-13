@@ -1,283 +1,195 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-@author: murdism
-"""
-
+import os
 import cv2
 import sys
-import os
 import argparse
+import numpy as np
+import json
 
-def draw_bounding_boxes(image, annotations, frame_idx):
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from utils import group_annotations_by_frame, compute_frames_idx
+from intention.models.rnn_vanilla import RNNVanillaPredictor
+from intention.models.rnn_autoregressive import RNNAutoregressivePredictor
+
+def compute_intentions_count(annotations_file):
     """
-    Draw bounding boxes on the given image based on the annotations for the current frame.
+    Computes the frequency of each intention label from the provided annotations file.
+
+    Args:
+        annotations_file (str): Path to the JSON file containing annotated data.
+
+    Prints:
+        A dictionary with intention labels as keys and their respective counts as values.
     """
-    
-    for ann in annotations:
-        frame, track_id, obj_type, truncated, occluded, alpha, bbox_left, bbox_top, bbox_right, bbox_bottom, *_ = ann
-       
+    intentions = {}
+    with open(annotations_file, 'r') as file:
+        data = json.load(file)
+        for _, v in data.items():
+            for i in v['intention']:
+                if i not in intentions:
+                    intentions[i] = 0
+                intentions[i] += 1
+    print(intentions)
 
-        # Process only the current frame
-        if int(frame) != frame_idx:
-            print (f"Invalid frame {int(frame) , frame_idx}")
-            continue
-
-        # Convert bounding box coordinates to integers
-        bbox_left, bbox_top, bbox_right, bbox_bottom = map(lambda x: int(float(x)), [bbox_left, bbox_top, bbox_right, bbox_bottom])
-
-        # Draw the 2D bounding box
-        color = (0, 255, 0)  # Green color
-        cv2.rectangle(image, (bbox_left, bbox_top), (bbox_right, bbox_bottom), color, 2)
-
-        # Add label (object type and track ID)
-        label = f"{obj_type} " #({track_id})
-        cv2.putText(image, label, (bbox_left, bbox_top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-    return image
-# def process_video(video_path, annotation_path, save_output=False, output_video_path="output_video.mp4"):
-#     """
-#     Process a video to overlay KITTI annotations, visualize, and optionally save the result.
-#     Annotations start from second frame and repeat every third frame.
-#     """
-#     # Read annotations from file
-#     with open(annotation_path, 'r') as f:
-#         annotations = [line.strip().split() for line in f.readlines()]
-
-#     # Open the video
-#     cap = cv2.VideoCapture(video_path)
-#     if not cap.isOpened():
-#         print("Error: Unable to open video file.")
-#         return
-
-#     # Define video writer if saving output
-#     writer = None
-#     if save_output:
-#         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-#         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-#         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-#         fps = cap.get(cv2.CAP_PROP_FPS)
-#         writer = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
-    
-#     frame_idx = 0
-#     last_annotation_frame = None
-    
-#     while True:
-#         ret, frame = cap.read()
-#         if not ret:
-#             print("End of video!")
-#             break
-
-#         # Only get new annotations on frames that should be annotated (1, 4, 7, etc.)
-#         if frame_idx % 3 == 1:
-#             annotation_idx = frame_idx // 3 + 1
-#             current_frame_annotations = [ann for ann in annotations if int(ann[0]) == annotation_idx]
-#             if current_frame_annotations:
-#                 last_annotation_frame = current_frame_annotations
-        
-#         # Use the last valid annotations for visualization
-#         if last_annotation_frame:
-#             annotated_frame = draw_bounding_boxes(frame, last_annotation_frame, frame_idx // 3 + 1)
-#         else:
-#             annotated_frame = frame
-
-#         # Save frame if requested
-#         if save_output and writer:
-#             writer.write(annotated_frame)
-
-#         # Display frame
-#         cv2.namedWindow("Frame", cv2.WINDOW_NORMAL)
-#         cv2.imshow("Frame", annotated_frame)
-#         cv2.resizeWindow("Frame", 1280, 720)
-
-#         if cv2.waitKey(10) & 0xFF == ord('q'):
-#             print("Exiting visualization.")
-#             break
-
-#         frame_idx += 1
-
-#     # Release resources
-#     cap.release()
-#     if writer:
-#         writer.release()
-#     cv2.destroyAllWindows()
-def process_video(video_path, annotation_path, save_output=False, output_video_path="output_video.mp4"):
+def process_frame(frame, data):
     """
-    Process a video to overlay KITTI annotations, visualize, and optionally save the result.
-    Handles both 30fps and 25fps videos for 10Hz annotations.
-    """
-    # Read annotations from file
-    with open(annotation_path, 'r') as f:
-        annotations = [line.strip().split() for line in f.readlines()]
-        print(f"Loaded {len(annotations)} annotations")
+    Draws bounding boxes and intention labels on a video frame.
 
-    # Open the video
+    Args:
+        frame (numpy.ndarray): The video frame to process.
+        data (list): A list of tuples containing bounding box coordinates, 
+                     ground truth intention, and optionally predicted intention.
+
+    Returns:
+        numpy.ndarray: The processed frame with bounding boxes and intention labels.
+    """
+    for d in data:
+        bbox = d[0]
+        intention_gt = d[1]  
+
+        start_point = (int(bbox[0]), int(bbox[1]))
+        end_point = (int(bbox[2]), int(bbox[3]))
+        cv2.rectangle(frame, start_point, end_point, (0, 165, 255), 3)  
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6
+        thickness = 2
+
+        text_size_gt = cv2.getTextSize(intention_gt, font, font_scale, thickness)[0]
+        label_x1_gt, label_y1_gt = start_point[0], start_point[1] - text_size_gt[1] - 8
+        label_x2_gt, label_y2_gt = start_point[0] + text_size_gt[0] + 8, start_point[1]
+        label_y1_gt = max(label_y1_gt, 0)  
+
+        cv2.rectangle(frame, (label_x1_gt, label_y1_gt), (label_x2_gt, label_y2_gt), (0, 165, 255), -1)
+        cv2.putText(frame, intention_gt, (label_x1_gt + 4, label_y2_gt - 4), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+        if len(d) > 2 and d[2]:  
+            intention_pred = d[2]  
+            text_size_pred = cv2.getTextSize(intention_pred, font, font_scale, thickness)[0]
+            label_x1_pred = label_x2_gt + 10  
+            label_x2_pred = label_x1_pred + text_size_pred[0] + 8
+            label_y1_pred = label_y1_gt  
+            label_y2_pred = label_y2_gt
+
+            cv2.rectangle(frame, (label_x1_pred, label_y1_pred), (label_x2_pred, label_y2_pred), (128, 0, 128), -1)
+            cv2.putText(frame, intention_pred, (label_x1_pred + 4, label_y2_pred - 4), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+    return frame
+
+def plot_intentions_from_annotations(video_path, intentions):
+    """
+    Displays a video with ground truth intention annotations overlaid.
+
+    Args:
+        video_path (str): Path to the video file.
+        intentions (dict): Dictionary mapping frame indices to intention annotations.
+
+    Press 'q' to exit the visualization.
+    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print("Error: Unable to open video file.")
-        return
-
-    # Get video properties
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    
-    print(f"Video FPS: {fps}")
-    print(f"Total frames: {total_frames}")
-    print(f"Resolution: {frame_width}x{frame_height}")
-
-    # Calculate frame interval based on FPS to get 10Hz
-    if fps == 30:
-        interval = 3  # Every 3rd frame
-        frame_start = 1  # Second frame
-    elif fps == 25:
-        interval = 2.5  # Every 2.5 frames
-        frame_start = 1  # Second frame
-    else:
-        print(f"WARNING: Unexpected FPS: {fps}")
-        interval = fps / 10
-        frame_start = 1
-
-    # Define video writer if saving output
-    writer = None
-    if save_output:
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        writer = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
-    
-    # frame_idx = 0
-    # last_annotation_frame = None
-    # next_annotated_frame = frame_start
-    # annotation_counter = 0
-    # annotation_idx = 0
-    
-    # while True:
-    #     ret, frame = cap.read()
-    #     if not ret:
-    #         print(f"End of video! Processed {frame_idx} frames with {annotation_counter} annotations")
-    #         break
-        
-    #     # Check if current frame should have annotation
-    #     if frame_idx == int(next_annotated_frame):
-    #         annotation_idx +=1 #int((frame_idx - frame_start) / interval) + 1
-    #         current_frame_annotations = [ann for ann in annotations if int(ann[0]) == annotation_idx]
-    #         if current_frame_annotations:
-    #             last_annotation_frame = current_frame_annotations
-    #             annotation_counter += len(current_frame_annotations)
-    #             current_ann_idx = annotation_idx
-               
-    #         else:
-    #             current_ann_idx = annotation_idx-1
-    #         next_annotated_frame += interval
+        print(f"Error: Could not open video {video_path}")
+        exit()
+      
     frame_idx = 0
-    last_annotation_frame = None
-    next_annotated_frame = frame_start
-    annotation_counter = 0
-    annotation_idx = 0
-    current_ann_idx = 0
-    
-    # For debugging
-    last_valid_annotation_idx = 0
+    frame_jdx = 1
+    keep_frames = compute_frames_idx(cap)
     
     while True:
-    
         ret, frame = cap.read()
         if not ret:
-            print(f"End of video! Processed {frame_idx} frames with {annotation_counter} annotations")
-            break
+            break            
         
-        # Check if current frame should have annotation
-        if frame_idx == int(next_annotated_frame):
-            annotation_idx += 1
-            current_frame_annotations = [ann for ann in annotations if int(ann[0]) == annotation_idx]
-            
-            if current_frame_annotations:
-                print(f"Current annotation: {annotation_idx}")
-                last_annotation_frame = current_frame_annotations
-                annotation_counter += len(current_frame_annotations)
-                last_valid_annotation_idx = annotation_idx  # Keep track of last valid annotation
-            
-            next_annotated_frame += interval
-        print(f"current frame: {frame_idx}")
-        
-        # Create copy of frame for annotation
-        display_frame = frame.copy()
-        
-        # Use the last valid annotations for visualization
-        if last_annotation_frame:
-            display_frame = draw_bounding_boxes(display_frame, last_annotation_frame, last_valid_annotation_idx)
+        if frame_idx in keep_frames:
+            to_plot = [(d[1][-1], d[2]) for d in intentions[frame_jdx]]
+            process_frame(frame, to_plot)    
+            frame_jdx += 1
+    
+            cv2.namedWindow("Frame", cv2.WINDOW_NORMAL)
+            cv2.imshow("Frame", frame)
+            cv2.resizeWindow("Frame", 2560, 1440)
+            key = cv2.waitKey(100) & 0xFF
+                                    
+            if key == ord('q'):
+                print("Exiting visualization.")
+                break
 
-        # Add debug information to frame
-        debug_info = [
-            f"FPS: {fps}",
-            f"Frame: {frame_idx}/{total_frames}",
-            f"Interval: {interval}",
-            f"Annotations: {annotation_counter}",
-            f"Ann idx: {last_valid_annotation_idx}"
-        ]
-        for i, text in enumerate(debug_info):
-            cv2.putText(display_frame, text, (10, 30 + i*30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-        # Save frame if requested
-        if save_output and writer:
-            writer.write(display_frame)
-
-        # Display frame
-        cv2.namedWindow("Frame", cv2.WINDOW_NORMAL)
-        cv2.imshow("Frame", display_frame)
-        cv2.resizeWindow("Frame", 1280, 720)
-
-        key = cv2.waitKey(5) & 0xFF
-        if key == ord('q'):
-            print("Exiting visualization.")
-            break
-        elif key == ord('s'):  # Add ability to save current frame
-            cv2.imwrite(f"frame_{frame_idx:06d}.jpg", display_frame)
-            print(f"Saved frame_{frame_idx:06d}.jpg")
-
-        frame_idx += 1
-
-    # Release resources
+        frame_idx += 1           
+     
     cap.release()
-    if writer:
-        writer.release()
     cv2.destroyAllWindows()
-def main():
-    # Set up argument parser
-    p = argparse.ArgumentParser(description='Visualize and optionally save annotated video')
-    p.add_argument('--video_path', type=str, required=True, help='Path to the input video file')
-    p.add_argument('--annotation_path', type=str, help='Path to the annotation file. If not provided, will be inferred from video path')
-    p.add_argument('-save', action='store_true', help='Flag to save the annotated video')
+
+def plot_predicted_intentions(video_path, intentions, predictor):
+    """
+    Displays a video with both ground truth and predicted intentions.
+
+    Args:
+        video_path (str): Path to the video file.
+        intentions (dict): Dictionary mapping frame indices to intention annotations.
+        predictor (RNNAutoregressivePredictor or RNNVanillaPredictor): The trained model for predicting intentions.
+
+    Press 'q' to exit the visualization.
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"Error: Could not open video {video_path}")
+        exit()
+      
+    frame_idx = 0
+    frame_jdx = 1
+    keep_frames = compute_frames_idx(cap)
     
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break            
+        
+        if frame_idx in keep_frames:
+            predicted_intentions = []
+            objects_to_plot = [d for d in intentions[frame_jdx] if len(d[4]) > 0]
+            observed_trajs = [d[0] for d in objects_to_plot]
+            predictions = predictor.predict(observed_trajs)
+            predicted_intentions = [(d[1][-1], d[4][0], pred[0]) for d, pred in zip(objects_to_plot, predictions)]
+            
+            frame_jdx += 1
+    
+            process_frame(frame, predicted_intentions) 
+            cv2.namedWindow("Frame", cv2.WINDOW_NORMAL)
+            cv2.imshow("Frame", frame)
+            cv2.resizeWindow("Frame", 2560, 1440)
+            key = cv2.waitKey(100) & 0xFF
+                                    
+            if key == ord('q'):
+                print("Exiting visualization.")
+                break
+
+        frame_idx += 1           
+     
+    cap.release()
+    cv2.destroyAllWindows()  
+
+if __name__ == '__main__':  
+    p = argparse.ArgumentParser(description='Visualize annotations and predicted intentions.')
+    p.add_argument('past_trajectory', type=int, help='Length of past trajectory to consider.')
+    p.add_argument('future_trajectory', type=int, help='Prediction horizon length.')
+    p.add_argument('video_path', type=str, help='Path to the input video file.')
+    p.add_argument('annotations_file', type=str, help='Path to the annotations JSON file.')
+    p.add_argument('--setting', default="gt", type=str, choices=['gt', 'trained'], 
+                   help="Choose between visualizing ground truth intentions or predicted intentions.")
+    p.add_argument('--checkpoint', type=str, default=None, help='Path to the trained model checkpoint.')
+    p.add_argument('--device', type=str, default='cuda:1', choices=['cuda', 'cpu'], help='Device to run the model.')
+    p.add_argument('--normalize', default=False, type=bool, help='Apply normalization to input data.')
     args = p.parse_args()
-
-    # Get video path from arguments
-    video_path = args.video_path
     
-    # If annotation path not provided, infer it from video path
-    if args.annotation_path:
-        annotation_path = args.annotation_path
+    intentions = group_annotations_by_frame(args.past_trajectory, args.future_trajectory, args.annotations_file, intention=True)
+    if args.setting == "gt":
+        plot_intentions_from_annotations(args.video_path, intentions)
     else:
-        # Extract video number and construct annotation path
-        video_number = os.path.splitext(os.path.basename(video_path))[0]  # Gets filename without extension
-        annotation_path = f"emt/kitti_annotations/{video_number}.txt"
-    
-    # Handle output path if saving is enabled
-    if args.save:
-        # Create output directory if it doesn't exist
-        output_dir = "emt/annotated_videos"
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Construct output path
-        video_name = os.path.basename(video_path)
-        output_video_path = os.path.join(output_dir, video_name)
-        
-        print(f"Saving annotated video to {output_video_path}")
-        process_video(video_path, annotation_path, save_output=True, output_video_path=output_video_path)
-    else:
-        print("Visualizing annotated video without saving.")
-        process_video(video_path, annotation_path, save_output=False)
-
-if __name__ == "__main__":
-    main()
+        if args.checkpoint is None:
+            print("To run evaluation, please provide a checkpoint file.")
+            exit()
+        predictor = RNNVanillaPredictor(args.past_trajectory, 
+                                               args.future_trajectory, 
+                                               args.device, 
+                                               args.normalize, 
+                                               args.checkpoint) 
+        plot_predicted_intentions(args.video_path, intentions, predictor)
