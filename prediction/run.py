@@ -3,7 +3,7 @@
 """
 Created on Sat Sep 28 18:08:42 2024
 
-@author: nadya started it but murad messed it up
+@author: nadya
 """
 
 import os
@@ -56,7 +56,7 @@ def create_predictor(past_trajectory, future_trajectory, max_nodes, predictor, d
     elif predictor == 'transformer':
         return AttentionEMT(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
     elif predictor == 'transformer-gmm':
-        return AttentionGMM(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
+        return AttentionGMM(past_trajectory=past_trajectory, future_trajectory=future_trajectory, device=device, normalize=normalize, checkpoint_file=checkpoint_file)
     else:
         return RNNPredictor(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
         
@@ -91,12 +91,10 @@ if __name__ == '__main__':
     p.add_argument('--setting', type=str, default='train',choices=['train', 'evaluate'], help='Execution mode (train or evaluate)')
     p.add_argument('--checkpoint', type=str, default=None, help='Path to model checkpoint file, required if mode is evaluate')
     p.add_argument('--annotations_path', type=str, help='If annotations are placed in a location different from recommended')
+
     p.add_argument('--num_workers', type=int, default=8, help='Number of workers for dataloader')
     p.add_argument('--normalize', default=True, type=bool, help='Normalize data, recommended True')
     p.add_argument('--batch_size', type=int, default=128, help='Batch size')
-    p.add_argument('--device', type=str, default='cuda', help='Device to run the model',choices=['cuda', 'cpu'])
-    p.add_argument('--seed', type=int, default=42, help='Seed for reproducibility -> set zero for random seed generation')
-
     args = p.parse_args()
     
     set_seeds(int(args.seed))
@@ -114,18 +112,18 @@ if __name__ == '__main__':
                                                generating_setting)
     
     # Create Dataset
-    #train_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="train")
-    #test_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="test")
-    #train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
-    #test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    train_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="train")
+    test_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="test")
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
-    # Train and Evaluate Predictor 
-    #predictor = create_predictor(args.past_trajectory, 
-    #                             args.future_trajectory, 
-    #                             args.max_nodes, 
-    #                             args.predictor, 
-    #                             args.device,
-    #                             args.normalize,
-    #                             args.checkpoint)
-    #predictor.train(train_loader) 
-    #predictor.evaluate(test_loader)
+    #Train and Evaluate Predictor 
+    predictor = create_predictor(args.past_trajectory, 
+                                args.future_trajectory, 
+                                args.max_nodes, 
+                                args.predictor, 
+                                args.device,
+                                args.normalize,
+                                args.checkpoint)
+    predictor.train(train_loader) 
+    predictor.evaluate(test_loader)

@@ -421,3 +421,4 @@ class RNNPredictor:
                 pred_positions[:, t, :] = pred_positions[:, t-1, :] + pred_vel[:, t, :]
         
         return pred_positions
+
