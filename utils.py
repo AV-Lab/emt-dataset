@@ -442,3 +442,4 @@ def group_annotations_by_frame(past_trajectory, future_trajectory, annotations_f
         records = {k: records[k] for k in sorted(records.keys())}
     
     return records
+
