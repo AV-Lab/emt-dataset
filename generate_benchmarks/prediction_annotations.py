@@ -29,12 +29,11 @@ def save_labels_to_txt(labels, folder_path, file_name):
         
         
 def generate_prediction_annotations(raw_annotations, prediction_annotations_path):
-
+    last_id = 1
+    total_seq = 0
     for ann in raw_annotations:
         files = sorted(os.listdir(ann))
         prediction_labels = {} 
-        last_id = 1
-        
         
         for file in files: 
             file_path = os.path.join(ann, file)
@@ -83,12 +82,23 @@ def generate_prediction_annotations(raw_annotations, prediction_annotations_path
                 if v['frames'][idx] - v['frames'][idx-1] != 1: # if not consequitive frames
                     if first_record:
                         key = k
+                        first_record = False
                     else:
                         key = last_id
                         last_id += 1
                     
                     split_objects_predictions[key] =  {'class': v['class'], 'frames': v['frames'][beg:idx], 'bbox': v['bbox'][beg:idx]}
                     beg = idx
+                    
+         #  Final chunk for [beg : end]
+            if beg < len(v["frames"]):
+                if first_record:
+                    key = k
+                else:
+                    key = last_id
+                    last_id += 1
+        
+                split_objects_predictions[key] =  {'class': v['class'], 'frames': v['frames'][beg:], 'bbox': v['bbox'][beg:]}
                 
         # filter entries with trajectories less than 20 points
         filtered_objects_predictions = {k:v for k,v in split_objects_predictions.items() if len(v['frames']) >= 20}
@@ -96,14 +106,16 @@ def generate_prediction_annotations(raw_annotations, prediction_annotations_path
         # check if there are records with no consequitive frames
         error = 0
         for k, v in filtered_objects_predictions.items():
-            print(v)
             if not(sorted(v['frames']) == list(range(min(v['frames']), max(v['frames']) + 1))):
                 error += 1
         print(len(filtered_objects_predictions.keys()), error)
         
         file_name = ann.split('/')[-1]
         save_labels_to_txt(filtered_objects_predictions, prediction_annotations_path, file_name)
-            
+        total_seq += len(filtered_objects_predictions.keys())    
+    print(f"Total sequences: {total_seq}")
+        
+
 def main():
     raw_annotations_path = "../data/raw_annotations"
     prediction_annotations_path = "../data/annotations/prediction_annotations"

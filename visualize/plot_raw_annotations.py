@@ -18,13 +18,21 @@ ignore_objects = set(["Vehicle_traffic_light", "Other_traffic_light", "AV"])
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils import compute_frames_idx
 
+objects = set(['Car', 'Bus', 'Motorbike', 'Large_vehicle', 'Medium_vehicle', 'Emergency vehicle',  'Pedestrian', 'Cyclist', 'Small_motorised_vehicle'])
+
 def process_frame(frame, ann):
     for inst in ann[0]['instances']:    
-        bbox = inst['contour']['points']
+        points = inst['contour']['points']
         event = [inst['classValues'][0]['value'], inst['classValues'][1]['value'], inst['classValues'][2]['value']] # agent, action, landmark
         
-        start_point = (int(bbox[0]['x']), int(bbox[0]['y']))
-        end_point = (int(bbox[2]['x']), int(bbox[2]['y']))
+        bbox_left = min(point["x"] for point in points)
+        bbox_top = min(point["y"] for point in points)
+        bbox_right = max(point["x"] for point in points)
+        bbox_bottom = max(point["y"] for point in points)
+
+        bbox = (bbox_left, bbox_top, bbox_right, bbox_bottom)
+        start_point = (int(bbox[0]), int(bbox[1]))
+        end_point = (int(bbox[2]), int(bbox[3]))
         image = cv2.rectangle(frame, start_point, end_point, (0, 255, 0), 2) 
         
         for j, label in enumerate(event):
@@ -123,10 +131,32 @@ if __name__ == '__main__':
     #    for i, ann_file in enumerate(annotation_files):
     #        with open(ann_file, 'r') as file:
     #            data = json.load(file)
-    #            nbbox.append(len(data[0]['instances']))
+    #            n = len([d for d in data[0]['instances'] if d['classValues'][0]['value'] in objects])
+    #            nbbox.append(n)
     #    print(f"Density: {np.mean(nbbox)}")
     #    print(f"Total: {np.sum(nbbox)}")        
     #    print('**************************************************************/n')
+    
+    
+    #objects = {}    
+    #for ann in annotations:
+    #    print('**************************************************************/n')
+    #    print(ann)
+    #    annotation_files = sorted([ann + '/' + f for f in os.listdir(ann)])
+
+    #    for i, ann_file in enumerate(annotation_files):
+    #        with open(ann_file, 'r') as file:
+    #            data = json.load(file)
+    #            for inst in data[0]['instances']:
+    #                agent = inst['classValues'][0]['value']
+    #                if agent in objects:
+    #                    objects[agent].append(inst["trackId"])
+    #                else:
+    #                    objects[agent] = [inst["trackId"]]
+    
+    #for k,v in objects.items():
+    #    print(f"{k}    bbox: {len(v)}    agents: {len(set(v))}")                  
+    #print('**************************************************************/n')
         
 
     p = argparse.ArgumentParser(description='plot the annotations')
