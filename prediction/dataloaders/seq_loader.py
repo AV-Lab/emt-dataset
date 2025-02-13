@@ -21,7 +21,7 @@ from torch.utils.data import Dataset
 import pickle
 
 class SeqDataset(Dataset):
-    def __init__(self, data_folder, setting,include_velocity=False):
+    def __init__(self, data_folder, setting):
         """
         Args:
             data (list): A list of [observation, target] pairs.
@@ -29,7 +29,7 @@ class SeqDataset(Dataset):
                          [observation: [(x, y), ...], target: [(x, y), ...]].
         """
 
-        self.include_velocity = include_velocity
+        self.include_velocity = True
         
         file = "{}/{}.pkl".format(data_folder, setting)
         with open(file, 'rb') as f:
@@ -67,9 +67,6 @@ class SeqDataset(Dataset):
                 target_vel = torch.cat([first_target_vel, rest_target_vel], dim=0)
                 # Append velocity to target tensor
                 target_tensor = torch.cat([target_tensor, target_vel], dim=1)
-                # target_vel = target_tensor[1:] - target_tensor[:-1]
-                # target_vel = torch.cat([target_vel[[0]], target_vel], dim=0)
-                # target_tensor = torch.cat([target_tensor, target_vel], dim=1)
             
             all_sequences.append(obs_tensor)
             all_sequences.append(target_tensor)
@@ -115,63 +112,10 @@ class SeqDataset(Dataset):
             obs_vel = torch.cat([obs_vel[[0]], obs_vel], dim=0)        # [seq_len, 2]
             first_target_vel = target_tensor[0:1] - obs_tensor[-1:]    # First target velocity based on last observation
             obs_tensor = torch.cat([obs_tensor, obs_vel], dim=1)       # [seq_len, 4]
-            
-            # Compute velocities for target
-            # target_vel = target_tensor[1:] - target_tensor[:-1]        # [seq_len-1, 2]
-            # target_vel = torch.cat([target_vel[[0]], target_vel], dim=0)  # [seq_len, 2]
-            # target_tensor = torch.cat([target_tensor, target_vel], dim=1)  # [seq_len, 4]
-            
+
             # Calculate velocities for target
             rest_target_vel = target_tensor[1:] - target_tensor[:-1]  # Regular velocity computation
             target_vel = torch.cat([first_target_vel, rest_target_vel], dim=0)
-            # Append velocity to target tensor
             target_tensor = torch.cat([target_tensor, target_vel], dim=1)
             
         return obs_tensor, target_tensor
-    
-
-    
-    # def __getitem__(self, idx):
-    #     """
-    #     Returns observation and target with computed velocities.
-        
-    #     Returns:
-    #         obs_tensor: Shape [seq_len, 4] with (x,y,vx,vy)
-    #         target_tensor: Shape [seq_len, 4] with (x,y,vx,vy)
-    #     """
-    #     observation, target = self.data[idx]
-        
-    #     # Convert positions to tensors
-    #     obs_pos = torch.tensor(observation, dtype=torch.float32)    # [seq_len, 2]
-    #     target_pos = torch.tensor(target, dtype=torch.float32)      # [seq_len, 2]
-        
-    #     # Compute velocities (difference between consecutive positions)
-    #     obs_vel = obs_pos[1:] - obs_pos[:-1]                       # [seq_len-1, 2]
-    #     # For the first velocity, just use the first computed velocity
-    #     obs_vel = torch.cat([obs_vel[[0]], obs_vel], dim=0)        # [seq_len, 2]
-        
-    #     # Combine positions and velocities
-    #     obs_tensor = torch.cat([obs_pos, obs_vel], dim=1)          # [seq_len, 4]
-        
-    #     # Same for target
-    #     target_vel = target_pos[1:] - target_pos[:-1]                 # [seq_len-1, 2]
-    #     target_vel = torch.cat([target_vel[[0]], target_vel], dim=0)  # [seq_len, 2]
-    #     target_tensor = torch.cat([target_pos, target_vel], dim=1)    # [seq_len, 4]
-        
-    #     return obs_tensor, target_tensor
-
-    # def __getitem__(self, idx):
-    #     """
-    #     Retrieves the observation and target for a given index.
-        
-    #     Args:
-    #         idx (int): Index of the data sample.
-        
-    #     Returns:
-    #         obs_tensor (torch.Tensor): Tensor of observation coordinates.
-    #         target_tensor (torch.Tensor): Tensor of target coordinates.
-    #     """
-    #     observation, target = self.data[idx]
-    #     obs_tensor = torch.tensor(observation, dtype=torch.float32)
-    #     target_tensor = torch.tensor(target, dtype=torch.float32)
-        # return obs_tensor, target_tensor

@@ -327,8 +327,11 @@ class AttentionGMM(nn.Module):
         self.num_heads = self.config.num_heads
         self.device = self.config.get_device()
         self.max_len = max(self.config.past_trajectory, self.config.future_trajectory)
+        self.past_trajectory = self.config.past_trajectory
+        self.future_trajectory = self.config.future_trajectory
         self.mean = self.config.mean.to(self.device)
         self.std = self.config.std.to(self.device)
+        self.num_gaussians = self.config.n_gaussians
         self.normalized = self.config.normalize
         self.d_model = self.config.embedding_size
         self.input_features = self.config.in_features
@@ -404,6 +407,7 @@ class AttentionGMM(nn.Module):
         # Output layers for sigma and mu
         self.sigma_head = nn.Linear(self.hidden // 2, self.gaussians * 2)
         self.mu_head = nn.Linear(self.hidden // 2, self.gaussians * 2)
+
 
         
     def create_gmm_embedding(self):
@@ -614,12 +618,12 @@ class AttentionGMM(nn.Module):
         verbose: bool = True,
         save_path: str = 'prediction/results',
         save_model: bool = True,
-        save_frequency: int = 100,
-        # checkpoint_name: str = 'model.pt'
+        save_frequency: int = 50,
     ) -> Tuple[nn.Module, Dict]:
         """
         Train the model with metrics tracking and visualization.
         """
+        self.to(self.device)
         # Initialize weights using Xavier uniform initialization
         self._init_weights()
         
@@ -643,6 +647,13 @@ class AttentionGMM(nn.Module):
         metrics_dir = os.path.join(save_path, 'metrics')
         os.makedirs(models_dir, exist_ok=True)
         os.makedirs(metrics_dir, exist_ok=True)
+
+        # get mean and standard deviation from training dataset
+        self.mean= train_dl.dataset.mean.to(self.device)
+        self.std = train_dl.dataset.std.to(self.device)
+        print(f"mean : {self.mean} std {self.std}")
+        
+        counter = 0
 
         for epoch in range(epochs):
             super().train()  # Set train mode again for safety
@@ -684,11 +695,11 @@ class AttentionGMM(nn.Module):
 
                 
                 # Calculate loss
-                train_loss = self._mdn_loss_fn(pi, sigma_x,sigma_y, mu_x , mu_y,target,self.config.n_gaussians)
+                train_loss = self._mdn_loss_fn(pi, sigma_x,sigma_y, mu_x , mu_y,target,self.num_gaussians)
                 
                 # Backward pass
                 train_loss.backward()
-                total_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=20.0)
+                total_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=10.0)
                 # print(f"Gradient Norm: {total_norm:.4f}")
                 optimizer.step_and_update_lr()
 
@@ -725,6 +736,7 @@ class AttentionGMM(nn.Module):
                             'Best_ADE': f"{train_avgs['best_ade']:.4f}",
                             'Best_FDE': f"{train_avgs['best_fde']:.4f}"
                         })
+                    
 
             # Test evaluation
             if test_dl is not None:
@@ -741,6 +753,7 @@ class AttentionGMM(nn.Module):
                     'best_metrics': self.tracker.best_metrics,
                     'train_mean': self.mean,
                     'train_std': self.std,
+                    'num_gaussians': self.num_gaussians,
                     'model_config': {
                         # Only save what you actually use for loading
                         'in_features': self.input_features,
@@ -754,7 +767,7 @@ class AttentionGMM(nn.Module):
                 }
                 # torch.save(model_state, os.path.join(models_dir, checkpoint_name))
                 # Save the model
-                checkpoint_name = self.checkpoint
+                checkpoint_name = f'GMM_transformer_P_{self.past_trajectory}_F_{self.future_trajectory}_W_x.pth'
                 os.makedirs(save_path, exist_ok=True)
                 torch.save(model_state, os.path.join(models_dir, f"{checkpoint_name}"))
                 print("saving checkpoint at : ", os.path.join(models_dir, f"{checkpoint_name}"))
@@ -803,63 +816,135 @@ class AttentionGMM(nn.Module):
         
         return ade, fde
 
-    def evaluate(self,test_loader=None,from_train=False):
+    # def evaluate(self,test_loader=None,ckpt_path=None,from_train=False):
+    #     """
+    #     Evaluate the model on test data
+    #     Args:
+    #         test_loader: DataLoader for test data
+    #         from_train: Boolean indicating if called during training
+    #     """
+    #     if not from_train:
+    #         # During inference/loading
+    #         try:
+    #             checkpoint = torch.load(ckpt_path)
+    #             self.load_state_dict(checkpoint['model_state_dict'])
+    #             self.mean = checkpoint['train_mean']
+    #             self.std = checkpoint['train_std']  # Fixed bug
+    #             self.n_gaussians = checkpoint['num_gaussians']
+    #         except KeyError as e:
+    #             raise KeyError(f"Checkpoint missing required key: {e}")
+    #         except Exception as e:
+    #             raise Exception(f"Error loading checkpoint: {e}")
+            
+    #     # Need to use nn.Module's train method for mode setting
+    #     super().train(False)  # Same as eval() but avoids the conflict
+    #     self.tracker.test_available = True
+    #     with torch.no_grad():
+    #         for batch in test_loader:
+    #             obs_tensor_eval, target_tensor_eval = batch
+    #             obs_tensor_eval = obs_tensor_eval.to(self.device)
+    #             target_tensor_eval = target_tensor_eval.to(self.device)
+    #             dec_seq_len = target_tensor_eval.shape[1]
+
+    #             input_eval = (obs_tensor_eval[:,1:,2:4] - self.mean[2:])/self.std[2:]
+    #             updated_enq_length = input_eval.shape[1]
+    #             target_eval = (target_tensor_eval[:,:,2:4] - self.mean[2:])/self.std[2:]
+
+    #             tgt_eval = torch.zeros((target_eval.shape[0], dec_seq_len, 2), dtype=torch.float32, device=self.device)
+
+    #             tgt_mask = self._generate_square_mask(
+    #                 dim_trg=dec_seq_len,
+    #                 dim_src=updated_enq_length,
+    #                 mask_type="tgt"
+    #             ).to(self.device)
+
+    #             pi_eval, sigma_x_eval,sigma_y_eval, mu_x_eval , mu_y_eval = self(input_eval,tgt_eval,tgt_mask = tgt_mask)
+    #             mus_eval = torch.cat((mu_x_eval.unsqueeze(-1),mu_y_eval.unsqueeze(-1)),-1)
+    #             sigmas_eval = torch.cat((sigma_x_eval.unsqueeze(-1),sigma_y_eval.unsqueeze(-1)),-1)
+
+    #             # highest_prob_pred and best of n prediction
+    #             highest_prob_pred, best_of_n_pred = self._sample_gmm_predictions(pi_eval, sigmas_eval, mus_eval,target_eval)
+                
+    #             # Calculate metrics
+    #             eval_loss = self._mdn_loss_fn(pi_eval, sigma_x_eval,sigma_y_eval, mu_x_eval , mu_y_eval,target_eval,self.num_gaussians)
+    #             eval_obs_last_pos = obs_tensor_eval[:, -1:, 0:2]
+
+    #             eval_ade, eval_fde = self.calculate_metrics(highest_prob_pred, target_eval, eval_obs_last_pos)
+
+    #             eval_ade_best_n, eval_fde_best_n = self.calculate_metrics(best_of_n_pred, target_eval, eval_obs_last_pos)
+                
+    #             batch_metrics = {
+    #                         'loss': eval_loss.item(),
+    #                         'ade': eval_ade,
+    #                         'fde': eval_fde,
+    #                         'best_ade': eval_ade_best_n,
+    #                         'best_fde': eval_fde_best_n
+    #                     }
+    #             self.tracker.update(batch_metrics, obs_tensor_eval.shape[0], phase='test')
+
+    #     # Print epoch metrics
+    #     if not from_train:
+    #         self.tracker.print_epoch_metrics(epoch=1, epochs=1, verbose=True)
+    
+    def evaluate(self, test_loader=None, ckpt_path=None, from_train=False):
         """
         Evaluate the model on test data
         Args:
             test_loader: DataLoader for test data
+            ckpt_path: Path to checkpoint file
             from_train: Boolean indicating if called during training
         """
+        if test_loader is None:
+            raise ValueError("test_loader cannot be None")
+            
+        # Store initial training mode
+        training = self.training
         
-        # Need to use nn.Module's train method for mode setting
-        super().train(False)  # Same as eval() but avoids the conflict
-        self.tracker.test_available = True
-        with torch.no_grad():
-            for batch in test_loader:
-                obs_tensor_eval, target_tensor_eval = batch
-                obs_tensor_eval = obs_tensor_eval.to(self.device)
-                target_tensor_eval = target_tensor_eval.to(self.device)
-                dec_seq_len = target_tensor_eval.shape[1]
+        try:
+            if not from_train:
+                try:
+                    checkpoint = torch.load(ckpt_path)
+                    self.load_state_dict(checkpoint['model_state_dict'])
+                    self.mean = checkpoint['train_mean']
+                    self.std = checkpoint['train_std']  # Fixed bug
+                    self.n_gaussians = checkpoint['num_gaussians']
+                    self.to(self.device)
+                except KeyError as e:
+                    raise KeyError(f"Checkpoint missing required key: {e}")
+                except Exception as e:
+                    raise Exception(f"Error loading checkpoint: {e}")
+                        
+            # Need to use nn.Module's train method for mode setting
+            super().train(False)  # Same as eval() but avoids the conflict
+            self.tracker.test_available = True
+            
+            with torch.no_grad():
+                for batch in test_loader:
+                    obs_tensor_eval, target_tensor_eval = batch
+                    
+                    # Add dimension check
+                    assert obs_tensor_eval.shape[-1] == 4, "Expected input with 4 features (pos_x, pos_y, vel_x, vel_y)"
+                    
+                    obs_tensor_eval = obs_tensor_eval.to(self.device)
+                    target_tensor_eval = target_tensor_eval.to(self.device)
+                    dec_seq_len = target_tensor_eval.shape[1]
 
-                input_eval = (obs_tensor_eval[:,1:,2:4] - self.mean[2:])/self.std[2:]
-                updated_enq_length = input_eval.shape[1]
-                target_eval = (target_tensor_eval[:,:,2:4] - self.mean[2:])/self.std[2:]
+                    input_eval = (obs_tensor_eval[:,1:,2:4] - self.mean[2:])/self.std[2:]
+                    updated_enq_length = input_eval.shape[1]
+                    target_eval = (target_tensor_eval[:,:,2:4] - self.mean[2:])/self.std[2:]
 
-                tgt_eval = torch.zeros((target_eval.shape[0], dec_seq_len, 2), dtype=torch.float32, device=self.device)
+                    # Rest of your existing code...
+                    
+                    if hasattr(torch.cuda, 'empty_cache'):
+                        torch.cuda.empty_cache()
 
-                tgt_mask = self._generate_square_mask(
-                    dim_trg=dec_seq_len,
-                    dim_src=updated_enq_length,
-                    mask_type="tgt"
-                ).to(self.device)
-
-                pi_eval, sigma_x_eval,sigma_y_eval, mu_x_eval , mu_y_eval = self(input_eval,tgt_eval,tgt_mask = tgt_mask)
-                mus_eval = torch.cat((mu_x_eval.unsqueeze(-1),mu_y_eval.unsqueeze(-1)),-1)
-                sigmas_eval = torch.cat((sigma_x_eval.unsqueeze(-1),sigma_y_eval.unsqueeze(-1)),-1)
-
-                # highest_prob_pred and best of n prediction
-                highest_prob_pred, best_of_n_pred = self._sample_gmm_predictions(pi_eval, sigmas_eval, mus_eval,target_eval)
+            # Print epoch metrics
+            if not from_train:
+                self.tracker.print_epoch_metrics(epoch=1, epochs=1, verbose=True)
                 
-                # Calculate metrics
-                eval_loss = self._mdn_loss_fn(pi_eval, sigma_x_eval,sigma_y_eval, mu_x_eval , mu_y_eval,target_eval,self.config.n_gaussians)
-                eval_obs_last_pos = obs_tensor_eval[:, -1:, 0:2]
-
-                eval_ade, eval_fde = self.calculate_metrics(highest_prob_pred, target_eval, eval_obs_last_pos)
-
-                eval_ade_best_n, eval_fde_best_n = self.calculate_metrics(best_of_n_pred, target_eval, eval_obs_last_pos)
-                
-                batch_metrics = {
-                            'loss': eval_loss.item(),
-                            'ade': eval_ade,
-                            'fde': eval_fde,
-                            'best_ade': eval_ade_best_n,
-                            'best_fde': eval_fde_best_n
-                        }
-                self.tracker.update(batch_metrics, obs_tensor_eval.shape[0], phase='test')
-
-        # Print epoch metrics
-        if not from_train:
-            self.tracker.print_epoch_metrics(epoch=1, epochs=1, verbose=True)
+        finally:
+            # Restore original training mode
+            super().train(training)
     def _generate_square_mask(
         self,
         dim_trg: int,
