@@ -46,10 +46,7 @@ class PositionalEncoding(nn.Module):
 
         return self.dropout(x)
 
-'''
-A wrapper class for scheduled optimizer 
-source: https://github.com/jadore801120/attention-is-all-you-need-pytorch/blob/master/transformer/Optim.py
-'''
+
 class ScheduledOptim():
     '''A simple wrapper class for learning rate scheduling'''
 
@@ -217,13 +214,16 @@ class ModelConfig:
 
     def __post_init__(self):
         """Post-init processing."""
-        if self.checkpoint_file is None:
-            self.checkpoint_file = f'GMM_transformer_P_{self.past_trajectory}_F_{self.future_trajectory}_W_x.pth'
+        # if self.checkpoint_file is None:
+        #     self.checkpoint_file = f'GMM_transformer_P_{self.past_trajectory}_F_{self.future_trajectory}_W_x.pth'
+        if self.lr_mul <= 0:
+            raise ValueError("Learning rate multiplier must be positive")
+        if self.n_warmup_steps < 0:
+            raise ValueError("Warmup steps must be non-negative")
 
     def get_device(self) -> torch.device:
         """Return the device for computation."""
         return self.device if self.device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 
     def display_config(self, verbose: bool = False) -> None:
@@ -271,12 +271,6 @@ class ModelConfig:
                   f"out_features={self.out_features}, num_heads={self.num_heads}, "
                   f"embedding_size={self.embedding_size}, dropout={self.dropout}, "
                   f"n_gaussians={self.n_gaussians}")
-
-    def get_device(self) -> torch.device:
-        """Get the device to use. If not provided, use cuda if available else cpu."""
-        if self.device is not None:
-            return self.device
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary."""
@@ -305,38 +299,59 @@ class AttentionGMM(nn.Module):
         **kwargs
     ):
         super().__init__()
-
-        # Use provided config or create from kwargs
-        # self.config = config or ModelConfig(**kwargs)
-
         # Create config object first
-        if config is None:
-            self.config = ModelConfig(**kwargs)  # Create from kwargs, using defaults for unspecified params
-        else:
-            self.config = config
+        self.config = config or ModelConfig(**kwargs)
         
-        # Initialize metric tracker here
+        self._validate_config()
+        self._init_device()
+        self._init_model_params()
+        self._init_layers()
+        self._init_optimizer_params()
+        
         self.tracker = MetricTracker()
-        # Checkpoint file (user-defined or default)
-        self.checkpoint_file = self.config.checkpoint_file
-
-
         
-        # Store model parameters
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #self.config.get_device # Uses either provided device or default
-        self.num_heads = self.config.num_heads
+    def _validate_config(self):
+        """Validate configuration parameters."""
+        if self.config.embedding_size % self.config.num_heads != 0:
+            raise ValueError("Embedding size must be divisible by number of heads")
+        if self.config.num_heads < 1:
+            raise ValueError("Number of heads must be positive")
+        if self.config.n_gaussians < 1:
+            raise ValueError("Number of Gaussians must be positive")
+        if self.config.n_hidden < 1:
+            raise ValueError("Hidden size must be positive")
+        if not 0 <= self.config.dropout <= 1:
+            raise ValueError("Dropout rate must be between 0 and 1")
+        if self.config.past_trajectory < 1 or self.config.future_trajectory < 1:
+            raise ValueError("Trajectory lengths must be positive")
+        
+    
+    def _init_device(self):
+        """Initialize device configuration."""
         self.device = self.config.get_device()
+        self.mean = self.config.mean.to(self.device)
+        self.std = self.config.std.to(self.device)
+    
+    def _init_model_params(self):
+        """Initialize model parameters."""
+        self.num_heads = self.config.num_heads
         self.max_len = max(self.config.past_trajectory, self.config.future_trajectory)
         self.past_trajectory = self.config.past_trajectory
         self.future_trajectory = self.config.future_trajectory
-        self.mean = self.config.mean.to(self.device)
-        self.std = self.config.std.to(self.device)
         self.num_gaussians = self.config.n_gaussians
+        self.hidden = self.config.n_hidden
+        
         self.normalized = self.config.normalize
         self.d_model = self.config.embedding_size
         self.input_features = self.config.in_features
         self.output_features = self.config.out_features
+        self.dim_feedforward = 4 * self.d_model #Set feedforward dimensions (4x larger than d_model as per original paper)
 
+        # Define dropout rates
+        self.dropout_encoder = self.config.dropout
+        self.dropout_decoder = self.config.dropout
+    
+    def _init_optimizer_params(self):
         # Store optimizer parameters
         self.lr_mul = self.config.lr_mul 
         self.n_warmup_steps = self.config.n_warmup_steps
@@ -344,45 +359,45 @@ class AttentionGMM(nn.Module):
         self.optimizer_eps = self.config.optimizer_eps
 
 
-        self.gaussians =  self.config.n_gaussians
-        self.hidden = self.config.n_hidden
-        
-        # Define dropout rates
-        self.dropout_encoder = self.config.dropout
-        self.dropout_decoder = self.config.dropout
-        self.dropout_pos_enc = 0.0
-        
-        # Set feedforward dimensions (4x larger than d_model as per original paper)
-        self.dim_feedforward = 4 * self.d_model
 
-       
+    def _init_layers(self):
+        """Initialize model layers."""
+        # Embeddings
+        self.encoder_input_layer = Linear_Embeddings(self.config.in_features, self.d_model)
+        self.decoder_input_layer = Linear_Embeddings(self.config.out_features, self.d_model)
         
-        # Initialize embeddings and positional encoding
-        self.encoder_input_layer = Linear_Embeddings(self.input_features, self.d_model)
-        self.decoder_input_layer = Linear_Embeddings(self.output_features, self.d_model)
-        
+        # Positional encoding
         self.positional_encoding = PositionalEncoding(
-            d_model = self.d_model,
-            dropout = self.dropout_pos_enc,
-            max_len = self.max_len,
-            batch_first = self.config.batch_first
+            d_model=self.d_model,
+            max_len=self.max_len,
+            batch_first=self.config.batch_first
         )
         
-        # Initialize encoder
+        # Encoder
+        self.encoder = self._build_encoder()
+        
+        # Decoder
+        self.decoder = self._build_decoder()
+        
+        # GMM layers
+        self._init_gmm_layers()
+    
+    def _build_encoder(self):
+        """Build encoder layers."""
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model = self.d_model,
-            nhead = self.num_heads,
-            dim_feedforward = self.dim_feedforward,
-            dropout = self.dropout_encoder,
-            batch_first = self.config.batch_first,
-            activation = self.config.actn 
+            d_model=self.d_model,
+            nhead=self.num_heads,
+            dim_feedforward=self.dim_feedforward,
+            dropout=self.dropout_encoder,
+            batch_first=self.config.batch_first,
+            activation=self.config.actn
         )
-        self.encoder = nn.TransformerEncoder(
-            encoder_layer = encoder_layer,
-            num_layers = self.config.num_encoder_layers
+        return nn.TransformerEncoder(
+            encoder_layer=encoder_layer,
+            num_layers=self.config.num_encoder_layers
         )
-        
-        # Initialize decoder
+    
+    def _build_decoder(self):
         decoder_layer = nn.TransformerDecoderLayer(
             d_model = self.d_model,
             nhead = self.num_heads,
@@ -390,27 +405,14 @@ class AttentionGMM(nn.Module):
             dropout = self.dropout_decoder,
             batch_first = self.config.batch_first,
             activation = self.config.actn 
-        )
-        self.decoder = nn.TransformerDecoder(
+            )
+        return nn.TransformerDecoder(
             decoder_layer = decoder_layer,
             num_layers = self.config.num_decoder_layers
         )
 
-
-        # Create independent embedding networks  for mu and sigma
-        self.embedding_sigma = self.create_gmm_embedding()
-        self.embedding_mue = self.create_gmm_embedding()
-        self.embedding_pi = self.create_gmm_embedding()
-
-        # Mixture weights
-        self.pis_head = nn.Linear(self.hidden // 2, self.gaussians)
-        # Output layers for sigma and mu
-        self.sigma_head = nn.Linear(self.hidden // 2, self.gaussians * 2)
-        self.mu_head = nn.Linear(self.hidden // 2, self.gaussians * 2)
-
-
-        
-    def create_gmm_embedding(self):
+    def _create_gmm_embedding(self):
+        """Create a simple GMM embedding network."""
         return nn.Sequential(
             nn.Linear(self.d_model, self.hidden),
             nn.ELU(),
@@ -419,6 +421,18 @@ class AttentionGMM(nn.Module):
             nn.Linear(int(self.hidden * 0.75), self.hidden // 2),
             nn.ELU()
         )
+    def _init_gmm_layers(self):
+        """Initialize Gaussian Mixture Model layers."""
+        # Create embedding networks
+        self.embedding_sigma = self._create_gmm_embedding()
+        self.embedding_mue = self._create_gmm_embedding()
+        self.embedding_pi = self._create_gmm_embedding()
+        
+        # Create output heads
+        self.pis_head = nn.Linear(self.hidden // 2, self.num_gaussians)
+        self.sigma_head = nn.Linear(self.hidden // 2, self.num_gaussians * 2)
+        self.mu_head = nn.Linear(self.hidden // 2, self.num_gaussians * 2)
+    
     def _init_weights(self):
         """Initialize the model weights using Xavier uniform initialization."""
         for p in self.parameters():
@@ -427,35 +441,34 @@ class AttentionGMM(nn.Module):
 
     
     @classmethod
-    def load_model(cls, path: str, device: Optional[torch.device] = None) -> 'AttentionGMM':
+    def load_model(self, ckpt_path: str):
         """
-        Load a saved model from disk.
+        Load a complete model with all necessary state.
         
         Args:
-            path (str): Path to the saved model file
-            device (torch.device, optional): Device to load the model to
-            
-        Returns:
-            AttentionEMT: Loaded model instance
+            ckpt_path (str): Path to checkpoint file
         """
-        # Load the saved state
-        state = torch.load(path, map_location='cpu')
+        try:
+            checkpoint = torch.load(ckpt_path, map_location=self.device)
+            self.load_state_dict(checkpoint['model_state_dict'])
+            
+            # Load and move tensors to device
+            self.mean = checkpoint['train_mean'].to(self.device)
+            self.std = checkpoint['train_std'].to(self.device)
+            self.num_gaussians = checkpoint['num_gaussians']
+            
+            if 'model_config' in checkpoint:
+                # Update any config parameters if needed
+                for key, value in checkpoint['model_config'].items():
+                    setattr(self.config, key, value)
+            
+            return self
+                
+        except KeyError as e:
+            raise KeyError(f"Checkpoint missing required key: {e}")
+        except Exception as e:
+            raise Exception(f"Error loading checkpoint: {e}")
         
-        # Create model config from saved state
-        config = ModelConfig(**state['model_config'])
-        
-        # Create new model instance
-        model = cls(config=config)
-        
-        # Load state dict
-        model.load_state_dict(state['model_state_dict'])
-        
-        # Move to specified device or use default
-        device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = model.to(device)
-        
-        return model
-
     def configure_optimizer(
         self,
         lr_mul: Optional[float] = None,
@@ -519,97 +532,113 @@ class AttentionGMM(nn.Module):
         batch_size, seq_len, n_mixtures, _ = mue.shape
         best_of_n_pred = torch.zeros_like(highest_prob_pred)
         
-        for b in range(batch_size):
-            for t in range(seq_len):
-                errors = []
-                for k in range(n_mixtures):
-                    pred = mue[b, t, k]
-                    error = torch.norm(pred - gt_normalized[b, t])
-                    errors.append(error)
-                
-                best_k = torch.argmin(torch.tensor(errors))
-                best_of_n_pred[b, t] = mue[b, t, best_k]
+    
+        # Calculate errors for all mixtures at once
+        expanded_gt = gt_normalized.unsqueeze(2).expand(-1, -1, n_mixtures, -1)
+        errors = torch.norm(mue - expanded_gt, dim=-1)  # [batch_size, seq_len, n_mixtures]
+        
+        # Get best mixture for each timestep
+        best_k = torch.argmin(errors, dim=-1)  # [batch_size, seq_len]
+        
+        # Create indices on the same device as input tensors
+        batch_indices = torch.arange(batch_size, device=mue.device).view(-1, 1).expand(-1, seq_len)
+        seq_indices = torch.arange(seq_len, device=mue.device).view(1, -1).expand(batch_size, -1)
+        
+        # Gather predictions - all tensors are on the same device
+        best_of_n_pred = mue[batch_indices, seq_indices, best_k]
         
         return highest_prob_pred, best_of_n_pred
     
     
-    def _bivariate(self,pi,sigma_x,sigma_y, mu_x , mu_y,input):
+    def _bivariate(self,pi,sigma_x,sigma_y, mu_x , mu_y,target_points):
+        """
+        Calculate bivariate Gaussian probability density.
 
-        # Check the num of dims
-        if input.ndim ==3:
-            x = input[:,:,0]
-            y = input[:,:,1]
-            x = x.unsqueeze(-1)
-            y = y.unsqueeze(-1)
-            #print("Num of Dims is 3 : ",input.shape)
-        elif input.ndim ==2:
-            x = input[:,0]
-            y = input[:,1]
-            x = x.unsqueeze(dim=1)
-            y = y.unsqueeze(dim=1)
-            # print("Num of Dims is 2 : ",input.shape)
-        # make |mu|=K copies of y, subtract mu, divide by sigma
-        #print("Input: ",input.shape ,"\nX: ",x.shape,"\nY: ",y.shape,"\nMu_x : ",mu_x.shape,"\nMu_y : ",mu_y.shape,"\nSigma_x : ",sigma_x.shape)
-        result_x = torch.square((x.expand_as(mu_x) - mu_x) * torch.reciprocal(sigma_x))
-        result_y = torch.square((y.expand_as(mu_y) - mu_y) * torch.reciprocal(sigma_y))
-        
+        Args:
+            pi (torch.Tensor): Mixture weights (batch_size, seq_len, n_mixtures)
+            sigma_x (torch.Tensor): Standard deviations in x direction (batch_size, seq_len, n_mixtures)
+            sigma_y (torch.Tensor): Standard deviations in y direction (batch_size, seq_len, n_mixtures)
+            mu_x (torch.Tensor): Means in x direction (batch_size, seq_len, n_mixtures)
+            mu_y (torch.Tensor): Means in y direction (batch_size, seq_len, n_mixtures)
+            target_points (torch.Tensor): Target coordinates (batch_size, seq_len, 2) or (batch_size, 2)
 
-        result = -0.5*(result_x + result_y)
+        Returns:
+            torch.Tensor: Log probability densities (batch_size, seq_len, n_mixtures)
+        """
+        # Validate input values
+        if torch.isnan(sigma_x).any() or torch.isnan(sigma_y).any():
+            raise ValueError("NaN values detected in sigma computation")    
+        if torch.any(pi <= 0):
+            raise ValueError("Mixture weights must be positive")
+
+        # Validate shapes match
+        expected_shape = pi.shape
+        for tensor, name in [(sigma_x, 'sigma_x'), (sigma_y, 'sigma_y'), 
+                            (mu_x, 'mu_x'), (mu_y, 'mu_y')]:
+            if tensor.shape != expected_shape:
+                raise ValueError(f"Shape mismatch: {name} has shape {tensor.shape}, "
+                            f"expected {expected_shape}")
+
+        # Extract x, y coordinates and add necessary dimensions
+        if target_points.ndim == 3:
+            x = target_points[:,:,0].unsqueeze(-1)
+            y = target_points[:,:,1].unsqueeze(-1)
+        elif target_points.ndim == 2:
+            x = target_points[:,0].unsqueeze(1)
+            y = target_points[:,1].unsqueeze(1)
+        else:
+            raise ValueError(f"Expected 2D or 3D tensor, got {target_points.ndim}D")
+
+        # Calculate squared normalized distances
+        norm_x = torch.square((x.expand_as(mu_x) - mu_x) * torch.reciprocal(sigma_x))
+        norm_y = torch.square((y.expand_as(mu_y) - mu_y) * torch.reciprocal(sigma_y))
+
+        # Calculate log probabilities
+        exponent = -0.5 * (norm_x + norm_y)
         log_pi = torch.log(pi)
-        log_TwoPiSigma = -torch.log (2.0*np.pi*sigma_x*sigma_y)
-        # expand log values
-        values = log_pi + log_TwoPiSigma.expand_as(log_pi) 
-
-        return (values + result)
-    def _mdn_loss_fn(self,pi, sigma_x,sigma_y, mu_x , mu_y,y,mixtures):
-        # calculate the score for each mixture of the gaussian_distribution
-        # input shape (sample_size,num_mixtures,parameter) parametr is 2 in mue (x,y) and 2,2 in sigma [xx,xy,yx,yy] 
-        # Pi has shape of  (sample_size,num_mixtures)
-        # swap axis to have shape (num_mixtures,sample_size,parameter)
-        # print("Before anythinG: ",sigma_x.shape,sigma_y.shape, mu_x.shape , mu_y.shape,'\n: ',y.shape,'\n')
-
-
-        # mask = torch.lt(pi, 0)
-        # mask_res = torch.lt(pi, 0)
-
-        # # check if any element in the tensor satisfies the condition
-        # if torch.any(mask):
-        #     print("The pi tensor contains negative values.")
-        # else:
-        #     print("The pi tensor does not contain negative values.")
+        log_normalization = -torch.log(2.0 * np.pi * sigma_x * sigma_y)
+        
+        return log_pi + log_normalization.expand_as(log_pi) + exponent
+    def _mdn_loss_fn(self,pi, sigma_x,sigma_y, mu_x , mu_y,targets,n_mixtures):
+        """
+        Calculate the Mixture Density Network loss using LogSumExp trick for numerical stability.
+        
+        Args:
+            pi (torch.Tensor): Mixture weights
+            sigma_x (torch.Tensor): Standard deviations in x direction
+            sigma_y (torch.Tensor): Standard deviations in y direction
+            mu_x (torch.Tensor): Means in x direction
+            mu_y (torch.Tensor): Means in y direction
+            targets (torch.Tensor): Target points
+            n_mixtures (int): Number of Gaussian mixtures
+        
+        Returns:
+            torch.Tensor: Mean negative log likelihood loss
+        """
 
         
-        result = self._bivariate(pi,sigma_x,sigma_y, mu_x , mu_y,y) 
-        # print("result shape: ",result.shape)
-        # mask_res = torch.lt(result, 0)
+        # Calculate log probabilities for each mixture component
+        log_probs = self._bivariate(pi, sigma_x, sigma_y, mu_x, mu_y, targets)
 
-        # # check if any element in the tensor satisfies the condition
-        # if torch.any(mask_res):
-        #     print("The result tensor contains negative values.")
-        # else:
-        #     print("The result tensor does not contain negative values.")
-        # max of results
-        # m = torch.max(result)
-        # changed value of max
-        #torch.tensor
-        m = (torch.max(result, dim=2, keepdim=True)[0]).repeat(1,1,mixtures)
-        # print("max of results shape: ",m.shape)
-        # print("result of results shape: ",result.shape)
-        # LogSumExp trick log(sum(exp)) will be = m + log(sum (exp (result-m)))
-        exp_value = torch.exp(result-m)
-        # print("exp_value of exp_value shape: ",exp_value.shape)
-        epsilon = 0.00001
-        # changed the last dimention dim from 1 to -1
-        result = torch.sum(exp_value, dim=-1) + epsilon
-        #print("result after sum: ",result)
-        #org
-        #result = -(m + torch.log(result))
-        result = -(m[:,:,0] + torch.log(result))
-        # counter+=1
-        if(torch.isnan(result).any()):
-            # print("Counter loss: ",counter)
-            print("result m : ",m.item)
-        return torch.mean(result)
+        # Apply LogSumExp trick for numerical stability
+        max_log_probs = torch.max(log_probs, dim=2, keepdim=True)[0]
+        max_log_probs_repeated = max_log_probs.repeat(1, 1, n_mixtures)
+
+
+        # Calculate stable log sum exp
+        exp_term = torch.exp(log_probs - max_log_probs_repeated)
+        epsilon = 0.00001 #torch.finfo(torch.float32).eps  # Use machine epsilon
+        sum_exp = torch.sum(exp_term, dim=-1) + epsilon
+
+        # Final loss calculation
+        neg_log_likelihood = -(max_log_probs[:,:,0] + torch.log(sum_exp))
+        
+        # Check for numerical instability
+        if torch.isnan(neg_log_likelihood).any():
+            raise ValueError("NaN values detected in loss computation")
+
+        return torch.mean(neg_log_likelihood)
+    
     def train(
         self,
         train_dl: DataLoader,
@@ -652,8 +681,6 @@ class AttentionGMM(nn.Module):
         self.mean= train_dl.dataset.mean.to(self.device)
         self.std = train_dl.dataset.std.to(self.device)
         print(f"mean : {self.mean} std {self.std}")
-        
-        counter = 0
 
         for epoch in range(epochs):
             super().train()  # Set train mode again for safety
@@ -815,77 +842,6 @@ class AttentionGMM(nn.Module):
         fde = calculate_fde(pred_pos, target_pos.tolist())
         
         return ade, fde
-
-    # def evaluate(self,test_loader=None,ckpt_path=None,from_train=False):
-    #     """
-    #     Evaluate the model on test data
-    #     Args:
-    #         test_loader: DataLoader for test data
-    #         from_train: Boolean indicating if called during training
-    #     """
-    #     if not from_train:
-    #         # During inference/loading
-    #         try:
-    #             checkpoint = torch.load(ckpt_path)
-    #             self.load_state_dict(checkpoint['model_state_dict'])
-    #             self.mean = checkpoint['train_mean']
-    #             self.std = checkpoint['train_std']  # Fixed bug
-    #             self.n_gaussians = checkpoint['num_gaussians']
-    #         except KeyError as e:
-    #             raise KeyError(f"Checkpoint missing required key: {e}")
-    #         except Exception as e:
-    #             raise Exception(f"Error loading checkpoint: {e}")
-            
-    #     # Need to use nn.Module's train method for mode setting
-    #     super().train(False)  # Same as eval() but avoids the conflict
-    #     self.tracker.test_available = True
-    #     with torch.no_grad():
-    #         for batch in test_loader:
-    #             obs_tensor_eval, target_tensor_eval = batch
-    #             obs_tensor_eval = obs_tensor_eval.to(self.device)
-    #             target_tensor_eval = target_tensor_eval.to(self.device)
-    #             dec_seq_len = target_tensor_eval.shape[1]
-
-    #             input_eval = (obs_tensor_eval[:,1:,2:4] - self.mean[2:])/self.std[2:]
-    #             updated_enq_length = input_eval.shape[1]
-    #             target_eval = (target_tensor_eval[:,:,2:4] - self.mean[2:])/self.std[2:]
-
-    #             tgt_eval = torch.zeros((target_eval.shape[0], dec_seq_len, 2), dtype=torch.float32, device=self.device)
-
-    #             tgt_mask = self._generate_square_mask(
-    #                 dim_trg=dec_seq_len,
-    #                 dim_src=updated_enq_length,
-    #                 mask_type="tgt"
-    #             ).to(self.device)
-
-    #             pi_eval, sigma_x_eval,sigma_y_eval, mu_x_eval , mu_y_eval = self(input_eval,tgt_eval,tgt_mask = tgt_mask)
-    #             mus_eval = torch.cat((mu_x_eval.unsqueeze(-1),mu_y_eval.unsqueeze(-1)),-1)
-    #             sigmas_eval = torch.cat((sigma_x_eval.unsqueeze(-1),sigma_y_eval.unsqueeze(-1)),-1)
-
-    #             # highest_prob_pred and best of n prediction
-    #             highest_prob_pred, best_of_n_pred = self._sample_gmm_predictions(pi_eval, sigmas_eval, mus_eval,target_eval)
-                
-    #             # Calculate metrics
-    #             eval_loss = self._mdn_loss_fn(pi_eval, sigma_x_eval,sigma_y_eval, mu_x_eval , mu_y_eval,target_eval,self.num_gaussians)
-    #             eval_obs_last_pos = obs_tensor_eval[:, -1:, 0:2]
-
-    #             eval_ade, eval_fde = self.calculate_metrics(highest_prob_pred, target_eval, eval_obs_last_pos)
-
-    #             eval_ade_best_n, eval_fde_best_n = self.calculate_metrics(best_of_n_pred, target_eval, eval_obs_last_pos)
-                
-    #             batch_metrics = {
-    #                         'loss': eval_loss.item(),
-    #                         'ade': eval_ade,
-    #                         'fde': eval_fde,
-    #                         'best_ade': eval_ade_best_n,
-    #                         'best_fde': eval_fde_best_n
-    #                     }
-    #             self.tracker.update(batch_metrics, obs_tensor_eval.shape[0], phase='test')
-
-    #     # Print epoch metrics
-    #     if not from_train:
-    #         self.tracker.print_epoch_metrics(epoch=1, epochs=1, verbose=True)
-    
     def evaluate(self, test_loader=None, ckpt_path=None, from_train=False):
         """
         Evaluate the model on test data
@@ -902,27 +858,18 @@ class AttentionGMM(nn.Module):
         
         try:
             if not from_train:
-                try:
-                    checkpoint = torch.load(ckpt_path)
-                    self.load_state_dict(checkpoint['model_state_dict'])
-                    self.mean = checkpoint['train_mean']
-                    self.std = checkpoint['train_std']  # Fixed bug
-                    self.n_gaussians = checkpoint['num_gaussians']
-                    self.to(self.device)
-                except KeyError as e:
-                    raise KeyError(f"Checkpoint missing required key: {e}")
-                except Exception as e:
-                    raise Exception(f"Error loading checkpoint: {e}")
+                self.load_model(ckpt_path, device=self.device)(ckpt_path, self.device)                                                     
                         
-            # Need to use nn.Module's train method for mode setting
-            super().train(False)  # Same as eval() but avoids the conflict
+           
+            # Set evaluation mode :  Need to use nn.Module's train method for mode setting
+            super().train(False)  
             self.tracker.test_available = True
             
             with torch.no_grad():
                 for batch in test_loader:
                     obs_tensor_eval, target_tensor_eval = batch
                     
-                    # Add dimension check
+                    # dimension check
                     assert obs_tensor_eval.shape[-1] == 4, "Expected input with 4 features (pos_x, pos_y, vel_x, vel_y)"
                     
                     obs_tensor_eval = obs_tensor_eval.to(self.device)
@@ -933,10 +880,40 @@ class AttentionGMM(nn.Module):
                     updated_enq_length = input_eval.shape[1]
                     target_eval = (target_tensor_eval[:,:,2:4] - self.mean[2:])/self.std[2:]
 
-                    # Rest of your existing code...
+                    tgt_eval = torch.zeros((target_eval.shape[0], dec_seq_len, 2), dtype=torch.float32, device=self.device)
+
+                    tgt_mask = self._generate_square_mask(
+                        dim_trg=dec_seq_len,
+                        dim_src=updated_enq_length,
+                        mask_type="tgt"
+                    ).to(self.device)
+
+                    pi_eval, sigma_x_eval,sigma_y_eval, mu_x_eval , mu_y_eval = self(input_eval,tgt_eval,tgt_mask = tgt_mask)
+                    mus_eval = torch.cat((mu_x_eval.unsqueeze(-1),mu_y_eval.unsqueeze(-1)),-1)
+                    sigmas_eval = torch.cat((sigma_x_eval.unsqueeze(-1),sigma_y_eval.unsqueeze(-1)),-1)
+
+                    # highest_prob_pred and best of n prediction
+                    highest_prob_pred, best_of_n_pred = self._sample_gmm_predictions(pi_eval, sigmas_eval, mus_eval,target_eval)
                     
-                    if hasattr(torch.cuda, 'empty_cache'):
-                        torch.cuda.empty_cache()
+                    # Calculate metrics
+                    eval_loss = self._mdn_loss_fn(pi_eval, sigma_x_eval,sigma_y_eval, mu_x_eval , mu_y_eval,target_eval,self.num_gaussians)
+                    eval_obs_last_pos = obs_tensor_eval[:, -1:, 0:2]
+
+                    eval_ade, eval_fde = self.calculate_metrics(highest_prob_pred, target_eval, eval_obs_last_pos)
+
+                    eval_ade_best_n, eval_fde_best_n = self.calculate_metrics(best_of_n_pred, target_eval, eval_obs_last_pos)
+                    
+                    batch_metrics = {
+                                'loss': eval_loss.item(),
+                                'ade': eval_ade,
+                                'fde': eval_fde,
+                                'best_ade': eval_ade_best_n,
+                                'best_fde': eval_fde_best_n
+                            }
+                    self.tracker.update(batch_metrics, obs_tensor_eval.shape[0], phase='test')
+                    
+                    # if hasattr(torch.cuda, 'empty_cache'):
+                    #     torch.cuda.empty_cache()
 
             # Print epoch metrics
             if not from_train:
@@ -1034,6 +1011,10 @@ class AttentionGMM(nn.Module):
         Returns:
             torch.Tensor: Output predictions
         """
+        # Add input validation
+        if src.dim() != 3 or tgt.dim() != 3:
+            raise ValueError("Expected 3D tensors for src and tgt")
+        
         # Move inputs to device
         src = src.to(self.device)
         tgt = tgt.to(self.device)

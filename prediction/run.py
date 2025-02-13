@@ -184,7 +184,7 @@ def create_predictor(past_trajectory, future_trajectory, max_nodes, predictor, d
     elif predictor == 'transformer':
         return AttentionEMT(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
     elif predictor == 'transformer-gmm':
-        return AttentionGMM(past_trajectory=past_trajectory, future_trajectory=future_trajectory, device=device, normalize=normalize, checkpoint_file=checkpoint_file).to(device)
+        return AttentionGMM(past_trajectory=past_trajectory, future_trajectory=future_trajectory, device=device, normalize=normalize, checkpoint_file=checkpoint_file)
     else:
         return RNNPredictor(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
         
@@ -255,5 +255,5 @@ if __name__ == '__main__':
                                 args.device,
                                 args.normalize,
                                 args.checkpoint)
-    predictor.train(train_loader) 
+    predictor.train(train_loader,test_loader) 
     predictor.evaluate(test_loader)
