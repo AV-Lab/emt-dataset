@@ -79,7 +79,7 @@ class RNNAutoregressivePredictor:
         self.hidden_size = 128
         self.num_layers = 2
         self.num_classes = 11
-        self.num_epochs = 100
+        self.num_epochs = 50
         self.normalize = normalize
         self.observation_len = observation_length
         self.target_len = prediction_horizon

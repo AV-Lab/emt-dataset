@@ -100,10 +100,11 @@ def plot_intentions_from_annotations(video_path, intentions):
             break            
         
         if frame_idx in keep_frames:
-            to_plot = [(d[1][-1], d[2]) for d in intentions[frame_jdx]]
-            process_frame(frame, to_plot)    
+            if frame_jdx in intentions: 
+                to_plot = [(d[1][-1], d[2]) for d in intentions[frame_jdx]]
+                process_frame(frame, to_plot)    
+            
             frame_jdx += 1
-    
             cv2.namedWindow("Frame", cv2.WINDOW_NORMAL)
             cv2.imshow("Frame", frame)
             cv2.resizeWindow("Frame", 2560, 1440)
@@ -145,6 +146,9 @@ def plot_predicted_intentions(video_path, intentions, predictor):
         
         if frame_idx in keep_frames:
             predicted_intentions = []
+            if frame_jdx in intentions: 
+                frame_jdx += 1
+                continue
             objects_to_plot = [d for d in intentions[frame_jdx] if len(d[4]) > 0]
             observed_trajs = [d[0] for d in objects_to_plot]
             predictions = predictor.predict(observed_trajs)
@@ -152,12 +156,16 @@ def plot_predicted_intentions(video_path, intentions, predictor):
             
             frame_jdx += 1
     
-            process_frame(frame, predicted_intentions) 
+            process_frame(frame, predicted_intentions)
             cv2.namedWindow("Frame", cv2.WINDOW_NORMAL)
             cv2.imshow("Frame", frame)
             cv2.resizeWindow("Frame", 2560, 1440)
+            
+            save_path = f"output/frame_{frame_jdx:05d}.png"
+            cv2.imwrite(save_path, frame)
+            
             key = cv2.waitKey(100) & 0xFF
-                                    
+                                            
             if key == ord('q'):
                 print("Exiting visualization.")
                 break

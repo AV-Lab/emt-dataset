@@ -94,7 +94,7 @@ if __name__ == '__main__':
     p.add_argument('--num_workers', type=int, default=8, help='Number of workers for dataloader')
     p.add_argument('--normalize', default=True, type=bool, help='Normalize data, recommended True')
     p.add_argument('--batch_size', type=int, default=128, help='Batch size')
-    p.add_argument('--device', type=str, default='cuda', help='Device to run the model',choices=['cuda', 'cpu'])
+    p.add_argument('--device', type=str, default='cuda:1', help='Device to run the model',choices=['cuda', 'cpu'])
     p.add_argument('--seed', type=int, default=42, help='Seed for reproducibility -> set zero for random seed generation')
 
     args = p.parse_args()
@@ -114,18 +114,18 @@ if __name__ == '__main__':
                                                generating_setting)
     
     # Create Dataset
-    #train_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="train")
-    #test_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="test")
-    #train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
-    #test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    train_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="train")
+    test_dataset = create_dataset(data_folder, args.predictor, args.max_nodes, setting="test")
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     # Train and Evaluate Predictor 
-    #predictor = create_predictor(args.past_trajectory, 
-    #                             args.future_trajectory, 
-    #                             args.max_nodes, 
-    #                             args.predictor, 
-    #                             args.device,
-    #                             args.normalize,
-    #                             args.checkpoint)
-    #predictor.train(train_loader) 
-    #predictor.evaluate(test_loader)
+    predictor = create_predictor(args.past_trajectory, 
+                                 args.future_trajectory, 
+                                 args.max_nodes, 
+                                 args.predictor, 
+                                 args.device,
+                                 args.normalize,
+                                 args.checkpoint)
+    predictor.train(train_loader) 
+    predictor.evaluate(test_loader)

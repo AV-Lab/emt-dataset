@@ -75,7 +75,7 @@ class RNNVanillaPredictor:
         self.target_len  = prediction_horizon
         self.normalize   = normalize
 
-        self.num_epochs  = 100
+        self.num_epochs  = 50
         self.device = device
 
         # Build the model

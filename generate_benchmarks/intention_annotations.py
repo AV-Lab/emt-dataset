@@ -35,7 +35,13 @@ cyclist_map = {'Moving' : 'lane-keeping',
 # For motorbikes
 motorbike_ignore = set([('Moving', 'On_pavement'), 
                         ('Moving_towards', 'On_left_pavement'), 
-                        ('Moving_towards', 'On_right_pavement')]) 
+                        ('Moving_towards', 'On_right_pavement'),
+                        ('Indicating_right', 'At_junction'), 
+                        ('Indicating_left', 'At_junction'),
+                        ('Indicating_left', 'In_vehicle_lane'),
+                        ('Indicating_right', 'In_vehicle_lane'),
+                        ('Indicating_right', 'In_outgoing_lane'),
+                        ('Indicating_left', 'In_outgoing_lane')]) 
 motorbike_map = {'Stopped' : 'stopped',
                   'Breaking' : 'braking',
                   'Moving_left' : 'merge-left',
@@ -44,8 +50,7 @@ motorbike_map = {'Stopped' : 'stopped',
                   'Turning_right' : 'turn-right',
                   'Moving' : 'lane-keeping',
                   'Moving_towards' : 'lane-keeping',
-                  'Moving_away' : 'lane-keeping',
-                  'Indicating_left' : 'lane-keeping'}
+                  'Moving_away' : 'lane-keeping'}
 
 # For small motorised vehicles
 small_motorised_vehicles_ignore = set([('Moving_towards', 'On_left_pavement'),
@@ -63,7 +68,6 @@ small_motorised_vehicles_map = {'Crossing_road_from_right': 'crossing',
 # For vehicles 
 vehicles_map = {('Hazard_lights_on', 'In_left_parking_area'):'stopped', 
                 ('Moving_away', 'At_junction'):'lane-keeping',
-                ('Indicating_left', 'In_vehicle_lane'):'lane-keeping',
                 ('Moving_right', 'At_bus_stop'):'merge-right',
                 ('Moving_towards', 'In_incoming_lane'):'lane-keeping', 
                 ('Turning_right', 'In_incoming_lane'):'turn-right',
@@ -75,7 +79,6 @@ vehicles_map = {('Hazard_lights_on', 'In_left_parking_area'):'stopped',
                 ('Moving_away', 'In_incoming_lane'):'lane-keeping', 
                 ('Turning_right', 'In_vehicle_lane'):'turn-right', 
                 ('Moving', 'In_right_parking_area'):'lane-keeping', 
-                ('Indicating_right', 'In_outgoing_lane'):'lane-keeping',
                 ('Turning_right', 'At_crossing'):'turn-right',
                 ('Moving_right', 'In_outgoing_lane'):'merge-right', 
                 ('Breaking', 'In_outgoing_lane'):'braking', 
@@ -93,11 +96,9 @@ vehicles_map = {('Hazard_lights_on', 'In_left_parking_area'):'stopped',
                 ('Hazard_lights_on', 'In_right_parking_area'):'stopped', 
                 ('Moving_right', 'In_incoming_lane'):'merge-right', 
                 ('Stopped', 'In_incoming_lane'):'stopped', 
-                ('Moving_right', 'In_vehicle_lane'):'merge-right', 
-                ('Indicating_right', 'In_vehicle_lane'):'lane-keeping', 
+                ('Moving_right', 'In_vehicle_lane'):'merge-right',  
                 ('Breaking', 'In_vehicle_lane'):'braking', 
                 ('Moving_left', 'In_vehicle_lane'):'merge-left', 
-                ('Indicating_left', 'In_outgoing_lane'):'lane-keeping', 
                 ('Stopped', 'In_vehicle_lane'):'stopped', 
                 ('Moving_left', 'In_right_parking_area'):'merge-left', 
                 ('Moving', 'In_outgoing_lane'):'lane-keeping', 
@@ -117,10 +118,14 @@ vehicles_map = {('Hazard_lights_on', 'In_left_parking_area'):'stopped',
                 ('Turning_left', 'At_junction'):'turn-left',  
                 ('Moving', 'In_incoming_lane'):'lane-keeping'}
 
-dynamic_static_map =  set([('Hazard_lights_on', 'In_outgoing_lane'), 
+vehicles_ignore =  set([('Hazard_lights_on', 'In_outgoing_lane'), 
                          ('Hazard_lights_on', 'In_incoming_lane'),  
                          ('Indicating_right', 'At_junction'), 
-                         ('Indicating_left', 'At_junction')])
+                         ('Indicating_left', 'At_junction'),
+                         ('Indicating_left', 'In_vehicle_lane'),
+                         ('Indicating_right', 'In_vehicle_lane'),
+                         ('Indicating_right', 'In_outgoing_lane'),
+                         ('Indicating_left', 'In_outgoing_lane')])
  
 ignore_objects = set(["Vehicle_traffic_light", "Other_traffic_light", "AV"])
 vehicles_category = set(["Car", "Medium_vehicle", "Large_vehicle", "Bus", "Emergency_vehicle"])
@@ -138,7 +143,7 @@ def save_labels_to_txt(labels, folder_path, file_name):
         json.dump(labels, file)
     print(f"Saved: {file_path}")
     
-def is_object_moving(bounding_boxes, threshold=1.0):
+def is_object_moving(bounding_boxes, threshold=2.0):
     centers = [( (x1 + x2) / 2, (y1 + y2) / 2) for x1, y1, x2, y2 in bounding_boxes]
     distances = [np.linalg.norm(np.array(centers[i]) - np.array(centers[i - 1])) for i in range(1, len(centers))]
     return any(distance > threshold for distance in distances)
@@ -178,8 +183,8 @@ def generate_intention_annotations(raw_annotations, intention_annotations_path):
                         if intention in small_motorised_vehicles_ignore: continue
                         intention = small_motorised_vehicles_map[action] 
                     elif agent in vehicles_category:
-                        if intention in vehicles_map:
-                            intention = vehicles_map[intention]
+                        if intention in vehicles_ignore: continue
+                        intention = vehicles_map[intention]
                     
                     # Extract and remap trackId
                     track_id = instance["trackId"]
@@ -218,13 +223,8 @@ def generate_intention_annotations(raw_annotations, intention_annotations_path):
                         key = last_id
                         last_id += 1
                     
-                    mapped_intentions = []
-                    dynamic = is_object_moving(v["bbox"][beg:idx])
-                    for i in v["intention"][beg:idx]:
-                        if i in dynamic_static_map:
-                            i = "lane-keeping" if dynamic else "stopped"
-                        mapped_intentions.append(i)
-        
+                    mapped_intentions = v["intention"][beg:idx]
+
                     split_objects_predictions[key] = {
                         "class": v["class"],
                         "frames": v["frames"][beg:idx],
@@ -241,12 +241,7 @@ def generate_intention_annotations(raw_annotations, intention_annotations_path):
                     key = last_id
                     last_id += 1
         
-                mapped_intentions = []
-                dynamic = is_object_moving(v["bbox"][beg:])
-                for i in v["intention"][beg:]:
-                    if i in dynamic_static_map:
-                        i = "lane-keeping" if dynamic else "stopped"
-                    mapped_intentions.append(i)
+                mapped_intentions = v["intention"][beg:]
         
                 split_objects_predictions[key] = {
                     "class": v["class"],
