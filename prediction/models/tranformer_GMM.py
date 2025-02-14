@@ -53,7 +53,7 @@ class ModelConfig:
     early_stopping_delta: float = 0.01
 
     # logging:
-    log_save_path = 'results/pre_trained/metrics/training_metrics'
+    log_save_path = 'results/metrics/training_metrics'
 
     def __post_init__(self):
         """Post-init processing."""
@@ -822,7 +822,7 @@ class AttentionGMM(nn.Module):
                     continue
                     
                 # Check if the current value is better than the best value
-                if current_value < (self.best_metrics[metric_name] - self.config.early_stopping_delta):
+                if current_value < (self.best_metrics[metric_name] + self.config.early_stopping_delta):
                     self.best_metrics[metric_name] = current_value
                     should_stop = False
             
@@ -896,7 +896,7 @@ class AttentionGMM(nn.Module):
             super().train(False)  
             self.tracker.test_available = True
 
-            logger.info(f"Starting evaluation on {len(test_loader)} batches")
+            # logger.info(f"Starting evaluation on {len(test_loader)} batches")
             num_evaluated = 0
             
             with torch.no_grad():
@@ -950,7 +950,7 @@ class AttentionGMM(nn.Module):
                     # if hasattr(torch.cuda, 'empty_cache'):
                     #     torch.cuda.empty_cache()
 
-            logger.info(f"Completed evaluation of {num_evaluated} samples")
+            # logger.info(f"Completed evaluation of {num_evaluated} samples")
             self.tracker.compute_epoch_metrics(phase='test')
             # Print epoch metrics
             if not from_train:
@@ -1032,7 +1032,7 @@ class AttentionGMM(nn.Module):
         if save_path:
             log_path = Path(save_path) / f'training_metrics_model_{self.past_trajectory}_{self.future_trajectory}_training.log'
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            file_handler = logging.FileHandler(str(log_path))
+            file_handler = logging.FileHandler(str(log_path),mode='w')
             file_handler.setFormatter(detailed_formatter)
             logger.addHandler(file_handler)
         
@@ -1147,160 +1147,6 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:,:x.size(1),:] if self.batch_first else x + self.pe[:x.size(0)]
 
         return self.dropout(x)
-# class MetricTracker:
-#     def __init__(self):
-#         self.train_available = False
-#         self.test_available = False
-
-#         # Separate running metrics for train and test
-#         self.running_metrics = {
-#             'train': self._init_metric_dict(),
-#             'test': self._init_metric_dict()
-#         }
-        
-#         self.history = {
-#             'train_loss': [], 'test_loss': [],
-#             'train_ade': [], 'test_ade': [],
-#             'train_fde': [], 'test_fde': [],
-#             'train_best_ade': [], 'test_best_ade': [],
-#             'train_best_fde': [], 'test_best_fde': []
-#         }
-
-#         self.best_metrics = {'ade': float('inf'), 'epoch': 0}
-        
-#         # Add batch tracking
-#         self.current_batch_metrics = {
-#             'train': self._init_metric_dict(),
-#             'test': self._init_metric_dict()
-#         }
-
-#     def _init_metric_dict(self):
-#         """Helper to initialize metrics dictionary."""
-#         return {key: {'value': 0, 'count': 0} for key in ['loss', 'ade', 'fde', 'best_ade', 'best_fde']}
-    
-#     def update(self, metrics_dict, batch_size, phase='train'):
-#         """Update running metrics with batch results and store history"""
-#         # Update epoch running totals
-#         for key, value in metrics_dict.items():
-#             self.running_metrics[phase][key]['value'] += value * batch_size
-#             self.running_metrics[phase][key]['count'] += batch_size
-            
-#             # Update current batch metrics
-#             self.current_batch_metrics[phase][key]['value'] = value
-#             self.current_batch_metrics[phase][key]['count'] = 1
-
-#         # # If all batches are processed (end of epoch), store history
-#         # if phase == 'train':
-#         #     epoch_metrics = self.get_averages(phase='train', mode='epoch')
-#         #     self.history['train_loss'].append(epoch_metrics['loss'])
-#         #     self.history['train_ade'].append(epoch_metrics['ade'])
-#         #     self.history['train_fde'].append(epoch_metrics['fde'])
-#         #     self.history['train_best_ade'].append(epoch_metrics['best_ade'])
-#         #     self.history['train_best_fde'].append(epoch_metrics['best_fde'])
-        
-#         # elif phase == 'test':
-#         #     epoch_metrics = self.get_averages(phase='test', mode='epoch')
-#         #     self.history['test_loss'].append(epoch_metrics['loss'])
-#         #     self.history['test_ade'].append(epoch_metrics['ade'])
-#         #     self.history['test_fde'].append(epoch_metrics['fde'])
-#         #     self.history['test_best_ade'].append(epoch_metrics['best_ade'])
-#         #     self.history['test_best_fde'].append(epoch_metrics['best_fde'])
-
-#     def get_averages(self, phase='train', mode='epoch'):
-#         """
-#         Compute averages for specified phase.
-        
-#         Args:
-#             phase (str): 'train' or 'test'
-#             mode (str): 'epoch' for running averages, 'batch' for current batch
-#         """
-#         if phase not in self.running_metrics:
-#             raise ValueError(f"Invalid phase '{phase}'. Must be 'train' or 'test'.")
-            
-#         metrics = self.running_metrics[phase] if mode == 'epoch' else self.current_batch_metrics[phase]
-        
-#         return {
-#             key: (metric['value'] / metric['count'] if metric['count'] > 0 else 0)
-#             for key, metric in metrics.items()
-#         }
-#     def compute_epoch_metrics(self, phase='train'):
-#         """Compute and store metrics for completed epoch."""
-#         epoch_metrics = self.get_averages(phase)
-        
-#         # Store epoch averages in history
-#         self.history[f'{phase}_loss'].append(epoch_metrics['loss'])
-#         self.history[f'{phase}_ade'].append(epoch_metrics['ade'])
-#         self.history[f'{phase}_fde'].append(epoch_metrics['fde'])
-#         self.history[f'{phase}_best_ade'].append(epoch_metrics['best_ade'])
-#         self.history[f'{phase}_best_fde'].append(epoch_metrics['best_fde'])
-
-#         # Reset running metrics for next epoch
-#         self.running_metrics[phase] = self._init_metric_dict()
-        
-#         return epoch_metrics
-
-#     def print_epoch_metrics(self, epoch, epochs, verbose=True):
-#         """Print epoch metrics including best-of-N results."""
-#         if not verbose:
-#             return
-
-#         logger = logging.getLogger('AttentionGMM')
-#         train_avgs = self.get_averages('train', mode='epoch')
-#         test_avgs = self.get_averages('test', mode='epoch')
-
-#         # Calculate improvements from previous epoch
-#         if epoch > 0:
-#             train_improvements = {
-#                 'loss': self.history['train_loss'][-2] - train_avgs['loss'],
-#                 'ade': self.history['train_ade'][-2] - train_avgs['ade'],
-#                 'fde': self.history['train_fde'][-2] - train_avgs['fde'],
-#                 'best_ade': self.history['train_best_ade'][-2] - train_avgs['best_ade'],
-#                 'best_fde': self.history['train_best_fde'][-2] - train_avgs['best_fde']
-#             }
-#             test_improvements = {
-#                 'loss': self.history['test_loss'][-2] - test_avgs['loss'],
-#                 'ade': self.history['test_ade'][-2] - test_avgs['ade'],
-#                 'fde': self.history['test_fde'][-2] - test_avgs['fde'],
-#                 'best_ade': self.history['test_best_ade'][-2] - test_avgs['best_ade'],
-#                 'best_fde': self.history['test_best_fde'][-2] - test_avgs['best_fde']
-#             } if self.test_available else None
-
-#         logger.info(f"\nEpoch [{epoch+1}/{epochs}]")
-#         logger.info("-" * 80)
-
-#         if self.train_available:
-#             logger.info("Training Metrics:")
-#             logger.info(f"  Loss:     {train_avgs['loss']:.4f} " + 
-#                     (f"(↓ {train_improvements['loss']:.4f})" if epoch > 0 else ""))
-#             logger.info(f"  ADE:      {train_avgs['ade']:.4f} " + 
-#                     (f"(↓ {train_improvements['ade']:.4f})" if epoch > 0 else ""))
-#             logger.info(f"  FDE:      {train_avgs['fde']:.4f} " + 
-#                     (f"(↓ {train_improvements['fde']:.4f})" if epoch > 0 else ""))
-#             logger.info(f"  Best ADE: {train_avgs['best_ade']:.4f} " + 
-#                     (f"(↓ {train_improvements['best_ade']:.4f})" if epoch > 0 else ""))
-#             logger.info(f"  Best FDE: {train_avgs['best_fde']:.4f} " + 
-#                     (f"(↓ {train_improvements['best_fde']:.4f})" if epoch > 0 else ""))
-
-#         if self.test_available:
-#             logger.info("\nValidation Metrics:")
-#             logger.info(f"  Loss:     {test_avgs['loss']:.4f} " + 
-#                     (f"(↓ {test_improvements['loss']:.4f})" if epoch > 0 else ""))
-#             logger.info(f"  ADE:      {test_avgs['ade']:.4f} " + 
-#                     (f"(↓ {test_improvements['ade']:.4f})" if epoch > 0 else ""))
-#             logger.info(f"  FDE:      {test_avgs['fde']:.4f} " + 
-#                     (f"(↓ {test_improvements['fde']:.4f})" if epoch > 0 else ""))
-#             logger.info(f"  Best ADE: {test_avgs['best_ade']:.4f} " + 
-#                     (f"(↓ {test_improvements['best_ade']:.4f})" if epoch > 0 else ""))
-#             logger.info(f"  Best FDE: {test_avgs['best_fde']:.4f} " + 
-#                     (f"(↓ {test_improvements['best_fde']:.4f})" if epoch > 0 else ""))
-        
-#         logger.info("-" * 80)
-
-#     def reset(self, phase='train'):
-#         """Reset running metrics for specified phase."""
-#         self.running_metrics[phase] = self._init_metric_dict()
-#         self.current_batch_metrics[phase] = self._init_metric_dict()
-
 
 class MetricTracker:
     def __init__(self):
@@ -1384,9 +1230,8 @@ class MetricTracker:
             'best_ade': self.history[f'{phase}_best_ade'][-2],
             'best_fde': self.history[f'{phase}_best_fde'][-2]
         }
-
     def print_epoch_metrics(self, epoch, epochs, verbose=True):
-        """Print epoch metrics including best-of-N results."""
+        """Print epoch metrics including best-of-N results in a side-by-side format."""
         if not verbose:
             return
 
@@ -1396,38 +1241,82 @@ class MetricTracker:
         train_metrics = self.get_current_epoch_metrics('train')
         test_metrics = self.get_current_epoch_metrics('test') if self.test_available else None
 
-        # Calculate improvements from previous epoch metrics
+        # Get previous metrics for improvements
         train_prev = self.get_previous_epoch_metrics('train')
         test_prev = self.get_previous_epoch_metrics('test') if self.test_available else None
 
+        # Header
         logger.info(f"\nEpoch [{epoch+1}/{epochs}]")
-        logger.info("-" * 80)
+        logger.info("-" * 100)
+        logger.info(f"{'Metric':12} {'Training':35} {'Validation':35}")
+        logger.info("-" * 100)
 
-        # Training metrics
-        if self.train_available and train_metrics:  # Add check for train_metrics
-            logger.info("Training Metrics:")
-            for metric, name in [('loss', 'Loss'), ('ade', 'ADE'), ('fde', 'FDE'),
+        # Print metrics side by side
+        for metric, name in [('loss', 'Loss'), ('ade', 'ADE'), ('fde', 'FDE'),
                             ('best_ade', 'Best ADE'), ('best_fde', 'Best FDE')]:
-                current_value = train_metrics[metric]
+            train_str = "N/A"
+            val_str = "N/A"
+
+            if train_metrics:
+                train_val = train_metrics[metric]
+                train_str = f"{train_val:.4f}"
                 if train_prev:
-                    improvement = train_prev[metric] - current_value
-                    logger.info(f"  {name:8} {current_value:.4f} (↓ {improvement:.4f})")
-                else:
-                    logger.info(f"  {name:8} {current_value:.4f}")
+                    train_imp = train_prev[metric] - train_val
+                    train_str += f" (↓ {train_imp:.4f})"
 
-        # Test metrics
-        if self.test_available and test_metrics:  # Add check for test_metrics
-            logger.info("\nValidation Metrics:")
-            for metric, name in [('loss', 'Loss'), ('ade', 'ADE'), ('fde', 'FDE'),
-                            ('best_ade', 'Best ADE'), ('best_fde', 'Best FDE')]:
-                current_value = test_metrics[metric]
+            if test_metrics:
+                val_val = test_metrics[metric]
+                val_str = f"{val_val:.4f}"
                 if test_prev:
-                    improvement = test_prev[metric] - current_value
-                    logger.info(f"  {name:8} {current_value:.4f} (↓ {improvement:.4f})")
-                else:
-                    logger.info(f"  {name:8} {current_value:.4f}")
+                    val_imp = test_prev[metric] - val_val
+                    val_str += f" (↓ {val_imp:.4f})"
 
-        logger.info("-" * 80)
+            logger.info(f"{name:12} {train_str:35} {val_str:35}")
+
+        logger.info("-" * 100)
+    # def print_epoch_metrics(self, epoch, epochs, verbose=True):
+    #     """Print epoch metrics including best-of-N results."""
+    #     if not verbose:
+    #         return
+
+    #     logger = logging.getLogger('AttentionGMM')
+        
+    #     # Get current metrics from history
+    #     train_metrics = self.get_current_epoch_metrics('train')
+    #     test_metrics = self.get_current_epoch_metrics('test') if self.test_available else None
+
+    #     # Calculate improvements from previous epoch metrics
+    #     train_prev = self.get_previous_epoch_metrics('train')
+    #     test_prev = self.get_previous_epoch_metrics('test') if self.test_available else None
+
+    #     logger.info(f"\nEpoch [{epoch+1}/{epochs}]")
+    #     logger.info("-" * 80)
+
+    #     # Training metrics
+    #     if self.train_available and train_metrics:  # Add check for train_metrics
+    #         logger.info("Training Metrics:")
+    #         for metric, name in [('loss', 'Loss'), ('ade', 'ADE'), ('fde', 'FDE'),
+    #                         ('best_ade', 'Best ADE'), ('best_fde', 'Best FDE')]:
+    #             current_value = train_metrics[metric]
+    #             if train_prev:
+    #                 improvement = train_prev[metric] - current_value
+    #                 logger.info(f"  {name:8} {current_value:.4f} (↓ {improvement:.4f})")
+    #             else:
+    #                 logger.info(f"  {name:8} {current_value:.4f}")
+
+    #     # Test metrics
+    #     if self.test_available and test_metrics:  # Add check for test_metrics
+    #         logger.info("\nValidation Metrics:")
+    #         for metric, name in [('loss', 'Loss'), ('ade', 'ADE'), ('fde', 'FDE'),
+    #                         ('best_ade', 'Best ADE'), ('best_fde', 'Best FDE')]:
+    #             current_value = test_metrics[metric]
+    #             if test_prev:
+    #                 improvement = test_prev[metric] - current_value
+    #                 logger.info(f"  {name:8} {current_value:.4f} (↓ {improvement:.4f})")
+    #             else:
+    #                 logger.info(f"  {name:8} {current_value:.4f}")
+
+    #     logger.info("-" * 80)
     def reset(self, phase='train'):
         """Reset running metrics for specified phase."""
         self.running_metrics[phase] = self._init_metric_dict()
