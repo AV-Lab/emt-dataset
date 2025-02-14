@@ -2,50 +2,130 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 import math
-import torch.optim as optim
 import numpy as np
 import math
-from torch.autograd import Variable # storing data while learning
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
 from typing import Tuple, Dict, Optional, List, Union,Any
 from dataclasses import dataclass, asdict
 from evaluation.distance_metrics import calculate_ade,calculate_fde
-from utils import set_seeds
 from tqdm import tqdm
 import os
+import logging
+import sys
+from pathlib import Path
 
-class PositionalEncoding(nn.Module):
+@dataclass
+class ModelConfig:
+    """Configuration for the AttentionGMM model."""
+    # Model architecture parameters
+    past_trajectory: int = 10
+    future_trajectory: int = 10
+    device: Optional[torch.device] = None
+    normalize: bool = True
+    checkpoint_file: Optional[str] = None  # Allow user-defined checkpoint
+    mean: torch.tensor = torch.tensor([0.0, 0.0, 0.0, 0.0])
+    std: torch.tensor = torch.tensor([1.0, 1.0, 1.0, 1.0])
+    in_features: int = 2
+    out_features: int = 2
+    num_heads: int = 4
+    num_encoder_layers: int = 3
+    num_decoder_layers: int = 3
+    embedding_size: int = 128
+    dropout: float = 0.2
+    batch_first: bool = True
+    actn: str = "gelu"
+    
 
-    def __init__(self, d_model: int, dropout: float = 0.0, max_len: int = 5000, batch_first: bool=True):
-        super().__init__()
-        self.dropout = nn.Dropout(p=dropout)
-        self.batch_first = batch_first
+    # GMM parameters
+    n_gaussians: int = 6
+    n_hidden: int = 32
 
-        position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
-        if batch_first: 
-            pe = torch.zeros(1,max_len, d_model)
-            pe[0,:, 0::2] = torch.sin(position * div_term)
-            pe[0,:, 1::2] = torch.cos(position * div_term)
-        else: 
-            pe = torch.zeros(max_len, 1, d_model)
-            pe[:, 0, 0::2] = torch.sin(position * div_term)
-            pe[:, 0, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
+    # Optimizer parameters
+    lr_mul: float = 0.2
+    n_warmup_steps: int = 3500
+    optimizer_betas: Tuple[float, float] = (0.9, 0.98)
+    optimizer_eps: float = 1e-9
 
-    def forward(self, x: Tensor) -> Tensor:
+    # Early stopping parameters
+    early_stopping_patience: int = 5
+    early_stopping_delta: float = 0.01
+
+    # logging:
+    log_save_path = 'results/pre_trained/metrics/training_metrics'
+
+    def __post_init__(self):
+        """Post-init processing."""
+        # if self.checkpoint_file is None:
+        #     self.checkpoint_file = f'GMM_transformer_P_{self.past_trajectory}_F_{self.future_trajectory}_W_x.pth'
+        if self.lr_mul <= 0:
+            raise ValueError("Learning rate multiplier must be positive")
+        if self.n_warmup_steps < 0:
+            raise ValueError("Warmup steps must be non-negative")
+
+    def get_device(self) -> torch.device:
+        """Return the device for computation."""
+        return self.device if self.device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    def display_config(self, verbose: bool = False) -> None:
         """
+        Pretty print the model configuration using logging.
+        
         Args:
-            x: Tensor, shape [seq_len, batch_size, embedding_dim] 
-            x: Tensor, shape [batch_size, seq_len, embedding_dim]batch first
+            verbose (bool): If True, logs additional information and formatting
         """
-        #print("pe[:,:x.size(1),:] shape: ",self.pe.shape)
-        x = x + self.pe[:,:x.size(1),:] if self.batch_first else x + self.pe[:x.size(0)]
-
-        return self.dropout(x)
-
+        logger = logging.getLogger('AttentionGMM')
+        
+        if verbose:
+            logger.info("\n" + "="*50)
+            logger.info("AttentionGMM Model Configuration")
+            logger.info("="*50)
+            
+            logger.info("\nModel Architecture:")
+            logger.info("-"*20)
+            logger.info(f"Input Features:      {self.in_features}")
+            logger.info(f"Output Features:     {self.out_features}")
+            logger.info(f"Number of Heads:     {self.num_heads}")
+            logger.info(f"Encoder Layers:      {self.num_encoder_layers}")
+            logger.info(f"Decoder Layers:      {self.num_decoder_layers}")
+            logger.info(f"Embedding Size:      {self.embedding_size}")
+            logger.info(f"Dropout Rate:        {self.dropout}")
+            logger.info(f"Batch First:         {self.batch_first}")
+            logger.info(f"Activation Function: {self.actn}")
+            
+            logger.info("\nGMM Settings:")
+            logger.info("-"*20)
+            logger.info(f"Number of Gaussians: {self.n_gaussians}")
+            logger.info(f"Hidden Size:         {self.n_hidden}")
+            
+            logger.info("\nOptimizer Settings:")
+            logger.info("-"*20)
+            logger.info(f"Learning Rate Multiplier: {self.lr_mul}")
+            logger.info(f"Warmup Steps:            {self.n_warmup_steps}")
+            logger.info(f"Optimizer Betas:         {self.optimizer_betas}")
+            logger.info(f"Optimizer Epsilon:       {self.optimizer_eps}")
+            
+            logger.info("\nEarly Stopping Settings:")
+            logger.info("-"*20)
+            logger.info(f"Patience:               {self.early_stopping_patience}")
+            logger.info(f"Delta:                  {self.early_stopping_delta}")
+            
+            logger.info("\nDevice Configuration:")
+            logger.info("-"*20)
+            logger.info(f"Device: {self.get_device()}")
+            logger.info("\n" + "="*50)
+        else:
+            # Simple log of key parameters
+            logger.info(
+                f"AttentionGMM Config: in_features={self.in_features}, "
+                f"out_features={self.out_features}, num_heads={self.num_heads}, "
+                f"embedding_size={self.embedding_size}, dropout={self.dropout}, "
+                f"n_gaussians={self.n_gaussians}"
+            )
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert config to dictionary."""
+        return asdict(self)   
 
 class ScheduledOptim():
     '''A simple wrapper class for learning rate scheduling'''
@@ -84,198 +164,7 @@ class ScheduledOptim():
 
         for param_group in self._optimizer.param_groups:
             param_group['lr'] = lr
-
-
-class MetricTracker:
-    def __init__(self):
-        self.train_available = False
-        self.test_available = False
-
-        # Separate running metrics for train and test
-        self.running_metrics = {
-            'train': self._init_metric_dict(),
-            'test': self._init_metric_dict()
-        }
-        
-        self.history = {
-            'train_loss': [], 'test_loss': [],
-            'train_ade': [], 'test_ade': [],
-            'train_fde': [], 'test_fde': [],
-            'train_best_ade': [], 'test_best_ade': [],
-            'train_best_fde': [], 'test_best_fde': []
-        }
-
-        self.best_metrics = {'ade': float('inf'), 'epoch': 0}
-
-    def _init_metric_dict(self):
-        """Helper to initialize metrics dictionary."""
-        return {key: {'value': 0, 'count': 0} for key in ['loss', 'ade', 'fde', 'best_ade', 'best_fde']}
-    
-    def update(self, metrics_dict, batch_size, phase='train'):
-        """Update running metrics with batch results and store history"""
-        for key, value in metrics_dict.items():
-            self.running_metrics[phase][key]['value'] += value * batch_size
-            self.running_metrics[phase][key]['count'] += batch_size
-
-        # If all batches are processed (end of epoch), store history
-        if phase == 'train':
-            epoch_metrics = self.get_averages(phase='train')
-            self.history['train_loss'].append(epoch_metrics['loss'])
-            self.history['train_ade'].append(epoch_metrics['ade'])
-            self.history['train_fde'].append(epoch_metrics['fde'])
-            self.history['train_best_ade'].append(epoch_metrics['best_ade'])
-            self.history['train_best_fde'].append(epoch_metrics['best_fde'])
-        
-        elif phase == 'test':
-            epoch_metrics = self.get_averages(phase='test')
-            self.history['test_loss'].append(epoch_metrics['loss'])
-            self.history['test_ade'].append(epoch_metrics['ade'])
-            self.history['test_fde'].append(epoch_metrics['fde'])
-            self.history['test_best_ade'].append(epoch_metrics['best_ade'])
-            self.history['test_best_fde'].append(epoch_metrics['best_fde'])
-
-
-    def get_averages(self, phase='train'):
-        """Compute averages for specified phase."""
-        if phase not in self.running_metrics:
-            raise ValueError(f"Invalid phase '{phase}'. Must be 'train' or 'test'.")
-
-        return {
-            key: (metric['value'] / metric['count'] if metric['count'] > 0 else 0)
-            for key, metric in self.running_metrics[phase].items()
-        }
-
-    def reset(self, phase='train'):
-        """Reset running metrics for specified phase."""
-        self.running_metrics[phase] = self._init_metric_dict()
-
-    def record_history(self, phase='train'):
-        """Store epoch metrics for future analysis."""
-        avg_metrics = self.get_averages(phase)
-        for key in avg_metrics:
-            self.history[f"{phase}_{key}"].append(avg_metrics[key])
-
-    def print_epoch_metrics(self, epoch, epochs, verbose=True):
-        """Print epoch metrics including best-of-N results."""
-        if not verbose:
-            return
-
-        train_avgs = self.get_averages('train')
-        test_avgs = self.get_averages('test')
-
-        # print(f"\nEpoch {epoch+1}/{epochs}")
-
-        if self.train_available:
-            print(f"Train - Loss: {train_avgs['loss']:.4f}, "
-                  f"ADE: {train_avgs['ade']:.4f}, "
-                  f"FDE: {train_avgs['fde']:.4f}, "
-                  f"Best_ADE: {train_avgs['best_ade']:.4f}, "
-                  f"Best_FDE: {train_avgs['best_fde']:.4f}")
-
-        if self.test_available:
-            print(f"Test  - Loss: {test_avgs['loss']:.4f}, "
-                  f"ADE: {test_avgs['ade']:.4f}, "
-                  f"FDE: {test_avgs['fde']:.4f}, "
-                  f"Best_ADE: {test_avgs['best_ade']:.4f}, "
-                  f"Best_FDE: {test_avgs['best_fde']:.4f}")
-
-
-@dataclass
-class ModelConfig:
-    """Configuration for the AttentionGMM model."""
-    # Model architecture parameters
-    past_trajectory: int = 10
-    future_trajectory: int = 10
-    device: Optional[torch.device] = None
-    normalize: bool = True
-    checkpoint_file: Optional[str] = None  # Allow user-defined checkpoint
-    mean: torch.tensor = torch.tensor([0.0, 0.0, 0.0, 0.0])
-    std: torch.tensor = torch.tensor([1.0, 1.0, 1.0, 1.0])
-    in_features: int = 2
-    out_features: int = 2
-    num_heads: int = 4
-    num_encoder_layers: int = 3
-    num_decoder_layers: int = 3
-    embedding_size: int = 128
-    dropout: float = 0.2
-    batch_first: bool = True
-    actn: str = "gelu"
-    
-
-    # GMM parameters
-    n_gaussians: int = 6
-    n_hidden: int = 32
-
-    # Optimizer parameters
-    lr_mul: float = 0.2
-    n_warmup_steps: int = 4000
-    optimizer_betas: Tuple[float, float] = (0.9, 0.98)
-    optimizer_eps: float = 1e-9
-
-    def __post_init__(self):
-        """Post-init processing."""
-        # if self.checkpoint_file is None:
-        #     self.checkpoint_file = f'GMM_transformer_P_{self.past_trajectory}_F_{self.future_trajectory}_W_x.pth'
-        if self.lr_mul <= 0:
-            raise ValueError("Learning rate multiplier must be positive")
-        if self.n_warmup_steps < 0:
-            raise ValueError("Warmup steps must be non-negative")
-
-    def get_device(self) -> torch.device:
-        """Return the device for computation."""
-        return self.device if self.device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-    def display_config(self, verbose: bool = False) -> None:
-        """
-        Pretty print the model configuration.
-        
-        Args:
-            verbose (bool): If True, prints additional information and formatting
-        """
-        if verbose:
-            print("\n" + "="*50)
-            print("AttentionGMM Model Configuration")
-            print("="*50)
-            
-            print("\nModel Architecture:")
-            print("-"*20)
-            print(f"Input Features:      {self.in_features}")
-            print(f"Output Features:     {self.out_features}")
-            print(f"Number of Heads:     {self.num_heads}")
-            print(f"Encoder Layers:      {self.num_encoder_layers}")
-            print(f"Decoder Layers:      {self.num_decoder_layers}")
-            print(f"Embedding Size:      {self.embedding_size}")
-            print(f"Dropout Rate:        {self.dropout}")
-            print(f"Batch First:         {self.batch_first}")
-            print(f"Activation Function: {self.actn}")
-            print("\nGMM Settings:")
-            print("-"*20)
-            print(f"Number of Gaussians: {self.n_gaussians}")
-            print(f"Hidden Size:         {self.n_hidden}")
-            
-            print("\nOptimizer Settings:")
-            print("-"*20)
-            print(f"Learning Rate Multiplier: {self.lr_mul}")
-            print(f"Warmup Steps:            {self.n_warmup_steps}")
-            print(f"Optimizer Betas:         {self.optimizer_betas}")
-            print(f"Optimizer Epsilon:       {self.optimizer_eps}")
-            
-            print("\nDevice Configuration:")
-            print("-"*20)
-            print(f"Device: {self.get_device()}")
-            print("\n" + "="*50)
-        else:
-            # Simple print of key parameters
-            print(f"AttentionGMM Config: in_features={self.in_features}, "
-                  f"out_features={self.out_features}, num_heads={self.num_heads}, "
-                  f"embedding_size={self.embedding_size}, dropout={self.dropout}, "
-                  f"n_gaussians={self.n_gaussians}")
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert config to dictionary."""
-        return asdict(self)   
-     
+   
 class AttentionGMM(nn.Module):
     """
     Attention-based Encoder-Decoder Transformer Model for time series forecasting.
@@ -325,13 +214,12 @@ class AttentionGMM(nn.Module):
         if self.config.past_trajectory < 1 or self.config.future_trajectory < 1:
             raise ValueError("Trajectory lengths must be positive")
         
-    
     def _init_device(self):
         """Initialize device configuration."""
         self.device = self.config.get_device()
         self.mean = self.config.mean.to(self.device)
         self.std = self.config.std.to(self.device)
-    
+        
     def _init_model_params(self):
         """Initialize model parameters."""
         self.num_heads = self.config.num_heads
@@ -350,6 +238,9 @@ class AttentionGMM(nn.Module):
         # Define dropout rates
         self.dropout_encoder = self.config.dropout
         self.dropout_decoder = self.config.dropout
+
+        # Logging path
+        self.log_save_path = self.config.log_save_path
     
     def _init_optimizer_params(self):
         # Store optimizer parameters
@@ -358,7 +249,16 @@ class AttentionGMM(nn.Module):
         self.optimizer_betas = self.config.optimizer_betas
         self.optimizer_eps = self.config.optimizer_eps
 
-
+        #Initialize early stopping parameters
+        self.early_stop_counter = 0
+        self.early_stopping_patience = self.config.early_stopping_patience
+        self.early_stopping_delta = self.config.early_stopping_delta
+        self.best_metrics = {
+            'ade': float('inf'),
+            'fde': float('inf'),
+            'best_ade': float('inf'),
+            'best_fde': float('inf')
+        }
 
     def _init_layers(self):
         """Initialize model layers."""
@@ -421,6 +321,7 @@ class AttentionGMM(nn.Module):
             nn.Linear(int(self.hidden * 0.75), self.hidden // 2),
             nn.ELU()
         )
+    
     def _init_gmm_layers(self):
         """Initialize Gaussian Mixture Model layers."""
         # Create embedding networks
@@ -438,8 +339,272 @@ class AttentionGMM(nn.Module):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
-
     
+    def forward(self, src: torch.Tensor, tgt: torch.Tensor,
+                src_mask: torch.Tensor = None, tgt_mask: torch.Tensor = None) -> torch.Tensor:
+        """
+        Forward pass of the model.
+        
+        Args:
+            src (torch.Tensor): Source sequence
+            tgt (torch.Tensor): Target sequence
+            src_mask (torch.Tensor, optional): Mask for source sequence
+            tgt_mask (torch.Tensor, optional): Mask for target sequence
+            
+        Returns:
+            torch.Tensor: Output predictions
+        """
+        # Add input validation
+        if src.dim() != 3 or tgt.dim() != 3:
+            raise ValueError("Expected 3D tensors for src and tgt")
+        
+        # Move inputs to device
+        src = src.to(self.device)
+        tgt = tgt.to(self.device)
+        if src_mask is not None:
+            src_mask = src_mask.to(self.device)
+        if tgt_mask is not None:
+            tgt_mask = tgt_mask.to(self.device)
+        
+        # Encoder forward pass
+        encoder_embed = self.encoder_input_layer(src)
+        encoder_embed = self.positional_encoding(encoder_embed)
+        encoder_output = self.encoder(src=encoder_embed)
+        
+        # Decoder forward pass
+        decoder_embed = self.decoder_input_layer(tgt)
+        decoder_embed = self.positional_encoding(decoder_embed)
+        decoder_output = self.decoder(
+            tgt=decoder_embed,
+            memory=encoder_output,
+            tgt_mask=tgt_mask
+            # memory_mask=src_mask
+        )
+        
+
+        # Compute embeddings
+        sigma_embedded = self.embedding_sigma(decoder_output)
+        mue_embedded = self.embedding_mue(decoder_output)
+        pi_embedded = self.embedding_pi(decoder_output)  # <-- Apply embedding to pi
+
+        
+        # Mixture weights (apply softmax)
+        pi = torch.softmax(self.pis_head(pi_embedded), dim=-1)
+        
+        # Compute Sigmas with softplus to ensure positivity
+        sigma = nn.functional.softplus(self.sigma_head(sigma_embedded))
+        sigma_x, sigma_y = sigma.chunk(2, dim=-1)
+        
+        # Compute Means
+        mu = self.mu_head(mue_embedded)
+        mu_x, mu_y = mu.chunk(2, dim=-1)
+        
+        return pi, sigma_x,sigma_y, mu_x ,mu_y #,decoder_output
+    
+    def train(
+        self,
+        train_dl: DataLoader,
+        test_dl: DataLoader = None,
+        epochs: int = 2,
+        verbose: bool = True,
+        save_path: str = 'results',
+        save_model: bool = True,
+        save_frequency: int = 50,
+    ) -> Tuple[nn.Module, Dict]:
+        """
+        Train the model with metrics tracking and visualization.
+        """
+        # Setup logger
+        logger = logging.getLogger('AttentionGMM')
+        if not logger.handlers:
+            logger = self.setup_logger(save_path=self.log_save_path)
+        
+        self.to(self.device)
+        self._init_weights()
+        
+        #  if verbose print config:
+        self.config.display_config(verbose)
+
+        # Setup optimizer with model's configuration
+        optimizer = self.configure_optimizer(
+            lr_mul=self.lr_mul,
+            n_warmup_steps=self.n_warmup_steps,
+            optimizer_betas=self.optimizer_betas,
+            optimizer_eps=self.optimizer_eps
+        )
+
+        # set metrics tracker:
+        self.tracker.train_available = True
+
+        # Set up directory structure
+        models_dir = os.path.join(save_path, 'pretrained_models')
+        metrics_dir = os.path.join(save_path, 'metrics')
+        os.makedirs(models_dir, exist_ok=True)
+        os.makedirs(metrics_dir, exist_ok=True)
+
+        # get mean and standard deviation from training dataset
+        self.mean= train_dl.dataset.mean.to(self.device)
+        self.std = train_dl.dataset.std.to(self.device)
+       
+        for epoch in range(epochs):
+            super().train()  # Set train mode again for safety
+
+            # Training loop with progress bar
+            load_train = tqdm(train_dl, desc=f"Epoch: {epoch+1}/{epochs}") if verbose else train_dl
+
+            for id_b, batch in enumerate(load_train):
+                # Prepare input data
+                obs_tensor, target_tensor = batch
+                batch_size, enc_seq_len, feat_dim = obs_tensor.shape
+                dec_seq_len = target_tensor.shape[1]
+                
+                # Move to device and normalize
+                obs_tensor = obs_tensor.to(self.device)
+                target_tensor = target_tensor.to(self.device)
+
+                input_train = (obs_tensor[:,1:,2:4] - self.mean[2:])/self.std[2:]
+                updated_enq_length = input_train.shape[1]
+                target = ((target_tensor[:, :, 2:4] - self.mean[2:]) / self.std[2:]).clone()
+
+                tgt = torch.zeros((target.shape[0], dec_seq_len, 2), dtype=torch.float32, device=self.device)
+
+
+                # Generate masks
+                tgt_mask = self._generate_square_mask(
+                    dim_trg=dec_seq_len,
+                    dim_src=updated_enq_length,
+                    mask_type="tgt"
+                ).to(self.device)
+                
+
+                # Forward pass
+                optimizer.zero_grad()
+
+                pi, sigma_x,sigma_y, mu_x , mu_y = self(input_train,tgt,tgt_mask = tgt_mask)
+                mus = torch.cat((mu_x.unsqueeze(-1),mu_y.unsqueeze(-1)),-1)
+                sigmas = torch.cat((sigma_x.unsqueeze(-1),sigma_y.unsqueeze(-1)),-1)
+
+                
+                # Calculate loss
+                train_loss = self._mdn_loss_fn(pi, sigma_x,sigma_y, mu_x , mu_y,target,self.num_gaussians)
+                
+                # Backward pass
+                train_loss.backward()
+                total_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=10.0)
+                # print(f"Gradient Norm: {total_norm:.4f}")
+                optimizer.step_and_update_lr()
+
+                with torch.no_grad(): # to avoid data leakage during sampling
+                    
+                    highest_prob_pred, best_of_n_pred = self._sample_gmm_predictions(pi, sigmas, mus,target)
+                    
+                    obs_last_pos = obs_tensor[:, -1:, 0:2]
+
+                    # using heighest probability values
+                    mad, fad = self.calculate_metrics(
+                        highest_prob_pred.detach(), target.detach(), obs_last_pos)
+                    
+                    # Best of n_predictions error
+                    mad_best_n, fad_best_n = self.calculate_metrics(
+                        best_of_n_pred.detach(), target.detach(), obs_last_pos)
+                   
+                    # Update metrics using tracker
+                    batch_metrics = {
+                        'loss': train_loss.item(),
+                        'ade': mad,
+                        'fde': fad,
+                        'best_ade': mad_best_n,
+                        'best_fde': fad_best_n
+                    }
+                    self.tracker.update(batch_metrics, obs_tensor.shape[0], phase='train')      
+                    #Update progress bar
+                    if verbose:
+                        train_avgs = self.tracker.get_averages('train')
+                        load_train.set_postfix({
+                            'Loss': f"{train_avgs['loss']:.4f}",
+                            'ADE': f"{train_avgs['ade']:.4f}",
+                            'FDE': f"{train_avgs['fde']:.4f}",
+                            'Best_ADE': f"{train_avgs['best_ade']:.4f}",
+                            'Best_FDE': f"{train_avgs['best_fde']:.4f}"
+                        })
+                    
+            # At end of epoch
+            self.tracker.compute_epoch_metrics(phase='train')
+            # Test evaluation
+            if test_dl is not None:
+                self.evaluate(test_dl,from_train=True)
+
+            # Print epoch metrics
+            self.tracker.print_epoch_metrics(epoch, epochs, verbose)
+
+            # Check early stopping conditions
+            phase = 'test' if test_dl else 'train'
+            current_metrics = {
+                'ade': self.tracker.get_averages(phase)['ade'],
+                'fde': self.tracker.get_averages(phase)['fde'],
+                'best_ade': self.tracker.get_averages(phase)['best_ade'],
+                'best_fde': self.tracker.get_averages(phase)['best_fde']
+            }
+            
+            should_stop, best_metrics = self.check_early_stopping(current_metrics, verbose)
+
+            if save_model and (epoch + 1) % save_frequency == 0:
+                model_state = {
+                    'model_state_dict': self.state_dict(),  # Save directly
+                    'optimizer_state_dict': optimizer._optimizer.state_dict(),
+                    'training_history': self.tracker.history,
+                    'best_metrics': self.tracker.best_metrics,
+                    'train_mean': self.mean,
+                    'train_std': self.std,
+                    'num_gaussians': self.num_gaussians,
+                    'model_config': {
+                        # Only save what you actually use for loading
+                        'in_features': self.input_features,
+                        'out_features': self.output_features,
+                        'num_heads': self.num_heads,
+                        'num_encoder_layers': self.config.num_encoder_layers,
+                        'num_decoder_layers': self.config.num_decoder_layers,
+                        'embedding_size': self.d_model,
+                        'dropout': self.dropout_encoder
+                    }
+                }
+                # torch.save(model_state, os.path.join(models_dir, checkpoint_name))
+                # Save the model
+                checkpoint_name = f'GMM_transformer_P_{self.past_trajectory}_F_{self.future_trajectory}_W_x.pth'
+                os.makedirs(save_path, exist_ok=True)
+                torch.save(model_state, os.path.join(models_dir, f"{checkpoint_name}"))
+                logger.info(f"Saved checkpoint to: {save_path}")
+
+            
+            # Break if early stopping triggered
+            if should_stop:
+                logger.info("Early stopping triggered. Ending training.")
+                break
+
+            # Reset metrics for next epoch
+            self.tracker.reset('train')
+            self.tracker.reset('test')
+
+        # Plot training history if verbose
+        if verbose:
+            self.plot_metrics(
+                self.tracker.history['train_loss'],
+                self.tracker.history['test_loss'],
+                self.tracker.history['train_ade'],
+                self.tracker.history['test_ade'],
+                self.tracker.history['train_fde'],
+                self.tracker.history['test_fde'],
+                self.tracker.history['train_best_ade'],
+                self.tracker.history['test_best_ade'],
+                self.tracker.history['train_best_fde'],
+                self.tracker.history['test_best_fde'],
+                enc_seq_len,
+                dec_seq_len
+            )
+            logger.info(f"Training plots saved to {metrics_dir}")
+
+        return self, self.tracker.history
+
     @classmethod
     def load_model(self, ckpt_path: str):
         """
@@ -549,7 +714,6 @@ class AttentionGMM(nn.Module):
         
         return highest_prob_pred, best_of_n_pred
     
-    
     def _bivariate(self,pi,sigma_x,sigma_y, mu_x , mu_y,target_points):
         """
         Calculate bivariate Gaussian probability density.
@@ -638,185 +802,50 @@ class AttentionGMM(nn.Module):
             raise ValueError("NaN values detected in loss computation")
 
         return torch.mean(neg_log_likelihood)
-    
-    def train(
-        self,
-        train_dl: DataLoader,
-        test_dl: DataLoader = None,
-        epochs: int = 100,
-        verbose: bool = True,
-        save_path: str = 'prediction/results',
-        save_model: bool = True,
-        save_frequency: int = 50,
-    ) -> Tuple[nn.Module, Dict]:
-        """
-        Train the model with metrics tracking and visualization.
-        """
-        self.to(self.device)
-        # Initialize weights using Xavier uniform initialization
-        self._init_weights()
-        
-
-        #  if verbose print config:
-        self.config.display_config(verbose)
-        # Setup optimizer with model's configuration
-        optimizer = self.configure_optimizer(
-            lr_mul=self.lr_mul,
-            n_warmup_steps=self.n_warmup_steps,
-            optimizer_betas=self.optimizer_betas,
-            optimizer_eps=self.optimizer_eps
-        )
-
-        # set metrics tracker:
-        self.tracker.train_available = True
-
-
-        # Set up directory structure
-        models_dir = os.path.join(save_path, 'pretrained_models')
-        metrics_dir = os.path.join(save_path, 'metrics')
-        os.makedirs(models_dir, exist_ok=True)
-        os.makedirs(metrics_dir, exist_ok=True)
-
-        # get mean and standard deviation from training dataset
-        self.mean= train_dl.dataset.mean.to(self.device)
-        self.std = train_dl.dataset.std.to(self.device)
-        print(f"mean : {self.mean} std {self.std}")
-
-        for epoch in range(epochs):
-            super().train()  # Set train mode again for safety
-
-            # Training loop with progress bar
-            load_train = tqdm(train_dl, desc=f"Epoch: {epoch+1}/{epochs}") if verbose else train_dl
-
-            for id_b, batch in enumerate(load_train):
-                # Prepare input data
-                obs_tensor, target_tensor = batch
-                batch_size, enc_seq_len, feat_dim = obs_tensor.shape
-                dec_seq_len = target_tensor.shape[1]
+    def check_early_stopping(self, current_metrics: dict, verbose: bool = True) -> Tuple[bool, dict]:
+            """
+            Check if training should stop based on the current metrics.
+            
+            Args:
+                current_metrics (dict): Dictionary containing current metric values
+                verbose (bool): Whether to print early stopping information
                 
-                # Move to device and normalize
-                obs_tensor = obs_tensor.to(self.device)
-                target_tensor = target_tensor.to(self.device)
-
-                input_train = (obs_tensor[:,1:,2:4] - self.mean[2:])/self.std[2:]
-                updated_enq_length = input_train.shape[1]
-                target = ((target_tensor[:, :, 2:4] - self.mean[2:]) / self.std[2:]).clone()
-
-                tgt = torch.zeros((target.shape[0], dec_seq_len, 2), dtype=torch.float32, device=self.device)
-
-
-                # Generate masks
-                tgt_mask = self._generate_square_mask(
-                    dim_trg=dec_seq_len,
-                    dim_src=updated_enq_length,
-                    mask_type="tgt"
-                ).to(self.device)
-                
-
-                # Forward pass
-                optimizer.zero_grad()
-
-                pi, sigma_x,sigma_y, mu_x , mu_y = self(input_train,tgt,tgt_mask = tgt_mask)
-                mus = torch.cat((mu_x.unsqueeze(-1),mu_y.unsqueeze(-1)),-1)
-                sigmas = torch.cat((sigma_x.unsqueeze(-1),sigma_y.unsqueeze(-1)),-1)
-
-                
-                # Calculate loss
-                train_loss = self._mdn_loss_fn(pi, sigma_x,sigma_y, mu_x , mu_y,target,self.num_gaussians)
-                
-                # Backward pass
-                train_loss.backward()
-                total_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=10.0)
-                # print(f"Gradient Norm: {total_norm:.4f}")
-                optimizer.step_and_update_lr()
-
-                with torch.no_grad(): # to avoid data leakage during sampling
+            Returns:
+                Tuple[bool, dict]: (should_stop, best_metrics)
+            """
+            should_stop = True
+            logger = logging.getLogger('AttentionGMM')
+            
+            # Check each metric for improvement
+            for metric_name, current_value in current_metrics.items():
+                if metric_name not in self.best_metrics:
+                    continue
                     
-                    highest_prob_pred, best_of_n_pred = self._sample_gmm_predictions(pi, sigmas, mus,target)
-                    
-                    obs_last_pos = obs_tensor[:, -1:, 0:2]
+                # Check if the current value is better than the best value
+                if current_value < (self.best_metrics[metric_name] - self.config.early_stopping_delta):
+                    self.best_metrics[metric_name] = current_value
+                    should_stop = False
+            
+            # Update counter based on improvement
+            if should_stop:
+                self._early_stop_counter += 1
+                if verbose and self._early_stop_counter > 0:
+                    logger.info(f"\nNo improvement in metrics for {self._early_stop_counter} epochs.")
+            else:
+                self._early_stop_counter = 0
+            
+            # Check if we should stop training
+            should_stop = self._early_stop_counter >= self.config.early_stopping_patience
+            
+        # Log early stopping information if triggered
+            if should_stop and verbose:
+                logger.info(f"\nEarly stopping triggered after {self._early_stop_counter} epochs without improvement")
+                logger.info("Best metrics achieved:")
+                for metric, value in self.best_metrics.items():
+                    logger.info(f"Best {metric.upper()}: {value:.4f}")
+            
+            return should_stop, self.best_metrics.copy() 
 
-                    # using heighest probability values
-                    mad, fad = self.calculate_metrics(
-                        highest_prob_pred.detach(), target.detach(), obs_last_pos)
-                    
-                    # Best of n_predictions error
-                    mad_best_n, fad_best_n = self.calculate_metrics(
-                        best_of_n_pred.detach(), target.detach(), obs_last_pos)
-                   
-                    # Update metrics using tracker
-                    batch_metrics = {
-                        'loss': train_loss.item(),
-                        'ade': mad,
-                        'fde': fad,
-                        'best_ade': mad_best_n,
-                        'best_fde': fad_best_n
-                    }
-                    self.tracker.update(batch_metrics, obs_tensor.shape[0], phase='train')      
-                    #Update progress bar
-                    if verbose:
-                        train_avgs = self.tracker.get_averages('train')
-                        load_train.set_postfix({
-                            'Loss': f"{train_avgs['loss']:.4f}",
-                            'ADE': f"{train_avgs['ade']:.4f}",
-                            'FDE': f"{train_avgs['fde']:.4f}",
-                            'Best_ADE': f"{train_avgs['best_ade']:.4f}",
-                            'Best_FDE': f"{train_avgs['best_fde']:.4f}"
-                        })
-                    
-
-            # Test evaluation
-            if test_dl is not None:
-                self.evaluate(test_dl,from_train=True)
-
-            # Print epoch metrics
-            self.tracker.print_epoch_metrics(epoch, epochs, verbose)
-
-            if save_model and (epoch + 1) % save_frequency == 0:
-                model_state = {
-                    'model_state_dict': self.state_dict(),  # Save directly
-                    'optimizer_state_dict': optimizer._optimizer.state_dict(),
-                    'training_history': self.tracker.history,
-                    'best_metrics': self.tracker.best_metrics,
-                    'train_mean': self.mean,
-                    'train_std': self.std,
-                    'num_gaussians': self.num_gaussians,
-                    'model_config': {
-                        # Only save what you actually use for loading
-                        'in_features': self.input_features,
-                        'out_features': self.output_features,
-                        'num_heads': self.num_heads,
-                        'num_encoder_layers': self.config.num_encoder_layers,
-                        'num_decoder_layers': self.config.num_decoder_layers,
-                        'embedding_size': self.d_model,
-                        'dropout': self.dropout_encoder
-                    }
-                }
-                # torch.save(model_state, os.path.join(models_dir, checkpoint_name))
-                # Save the model
-                checkpoint_name = f'GMM_transformer_P_{self.past_trajectory}_F_{self.future_trajectory}_W_x.pth'
-                os.makedirs(save_path, exist_ok=True)
-                torch.save(model_state, os.path.join(models_dir, f"{checkpoint_name}"))
-                print("saving checkpoint at : ", os.path.join(models_dir, f"{checkpoint_name}"))
-
-
-            # Reset metrics for next epoch
-            self.tracker.reset('train')
-            self.tracker.reset('test')
-        # Plot training history if verbose
-        if verbose:
-            self.plot_metrics(
-                self.tracker.history['train_loss'], self.tracker.history['test_loss'],
-                self.tracker.history['train_ade'], self.tracker.history['test_ade'],
-                self.tracker.history['train_fde'], self.tracker.history['test_fde'],
-                enc_seq_len, dec_seq_len, batch_size,
-                save_path=metrics_dir
-            )
-
-        return self, self.tracker.history
-
-
-    # @staticmethod
     def calculate_metrics(self,pred: torch.Tensor, target: torch.Tensor, obs_last_pos: torch.Tensor) -> Tuple[float, float]:
         """
         Calculate ADE and FDE for predictions
@@ -850,6 +879,8 @@ class AttentionGMM(nn.Module):
             ckpt_path: Path to checkpoint file
             from_train: Boolean indicating if called during training
         """
+        logger = logging.getLogger('AttentionGMM')
+    
         if test_loader is None:
             raise ValueError("test_loader cannot be None")
             
@@ -864,6 +895,9 @@ class AttentionGMM(nn.Module):
             # Set evaluation mode :  Need to use nn.Module's train method for mode setting
             super().train(False)  
             self.tracker.test_available = True
+
+            logger.info(f"Starting evaluation on {len(test_loader)} batches")
+            num_evaluated = 0
             
             with torch.no_grad():
                 for batch in test_loader:
@@ -910,15 +944,20 @@ class AttentionGMM(nn.Module):
                                 'best_ade': eval_ade_best_n,
                                 'best_fde': eval_fde_best_n
                             }
+                    num_evaluated += obs_tensor_eval.shape[0]
                     self.tracker.update(batch_metrics, obs_tensor_eval.shape[0], phase='test')
                     
                     # if hasattr(torch.cuda, 'empty_cache'):
                     #     torch.cuda.empty_cache()
 
+            logger.info(f"Completed evaluation of {num_evaluated} samples")
+            self.tracker.compute_epoch_metrics(phase='test')
             # Print epoch metrics
             if not from_train:
                 self.tracker.print_epoch_metrics(epoch=1, epochs=1, verbose=True)
-                
+        except Exception as e:
+            logger.error(f"Error during evaluation: {str(e)}")
+            raise        
         finally:
             # Restore original training mode
             super().train(training)
@@ -959,125 +998,436 @@ class AttentionGMM(nn.Module):
             mask = torch.triu(mask, diagonal=1)  # Prevents attending to future positions
 
         return mask
-
-    @staticmethod
-    def plot_metrics(
+    
+    def setup_logger(self,name: str = 'AttentionGMM', save_path: str = None, level=logging.INFO):
+        """Set up logger configuration.
+        
+        Args:
+            name (str): Logger name
+            save_path (str): Directory to save log file
+            level: Logging level
+            
+        Returns:
+            logging.Logger: Configured logger
+        """
+        logger = logging.getLogger(name)
+        logger.setLevel(level)
+        
+        # Clear existing handlers
+        if logger.hasHandlers():
+            logger.handlers.clear()
+        
+        # Create formatters
+        detailed_formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        simple_formatter = logging.Formatter('%(message)s')
+        
+        # Stream handler for console output
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(simple_formatter)
+        logger.addHandler(stream_handler)
+        
+        # File handler if save_path is provided
+        if save_path:
+            log_path = Path(save_path) / f'training_metrics_model_{self.past_trajectory}_{self.future_trajectory}_training.log'
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.FileHandler(str(log_path))
+            file_handler.setFormatter(detailed_formatter)
+            logger.addHandler(file_handler)
+        
+        return logger
+    
+    def plot_metrics(self,
         train_losses: List[float],
         test_losses: List[float],
         train_ades: List[float],
         test_ades: List[float],
         train_fdes: List[float],
         test_fdes: List[float],
+        train_best_ades: List[float],
+        test_best_ades: List[float],
+        train_best_fdes: List[float],
+        test_best_fdes: List[float],
         enc_seq_len: int,
         dec_seq_len: int,
-        batch_size: int,
-        save_path: str =  f'prediction/pre_trained/metrics/training_metrics'
     ) -> None:
-        """Plot training metrics"""
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
-        
-        # Loss plot
-        ax1.plot(train_losses, label='Train Loss')
-        ax1.plot(test_losses, label='Test Loss')
-        ax1.set_title('Loss')
-        ax1.legend()
-        
-        # ADE plot
-        ax2.plot(train_ades, label='Train ADE')
-        ax2.plot(test_ades, label='Test ADE')
-        ax2.set_title('ADE')
-        ax2.legend()
-        
-        # FDE plot
-        ax3.plot(train_fdes, label='Train FDE')
-        ax3.plot(test_fdes, label='Test FDE')
-        ax3.set_title('FDE')
-        ax3.legend()
-        
-        plt.tight_layout()
-        plt.savefig(f'{save_path}/training_metrics_batch-size_{batch_size}_model_{enc_seq_len}_{dec_seq_len}.png')
-        plt.close()
-    def forward(self, src: torch.Tensor, tgt: torch.Tensor,
-                src_mask: torch.Tensor = None, tgt_mask: torch.Tensor = None) -> torch.Tensor:
-        """
-        Forward pass of the model.
+        """Plot training metrics including best-of-N predictions.
         
         Args:
-            src (torch.Tensor): Source sequence
-            tgt (torch.Tensor): Target sequence
-            src_mask (torch.Tensor, optional): Mask for source sequence
-            tgt_mask (torch.Tensor, optional): Mask for target sequence
-            
-        Returns:
-            torch.Tensor: Output predictions
+            train_losses: Training loss values
+            test_losses: Test loss values
+            train_ades: Training ADE values
+            test_ades: Test ADE values
+            train_fdes: Training FDE values
+            test_fdes: Test FDE values
+            train_best_ades: Training Best-of-N ADE values
+            test_best_ades: Test Best-of-N ADE values
+            train_best_fdes: Training Best-of-N FDE values
+            test_best_fdes: Test Best-of-N FDE values
+            enc_seq_len: Encoder sequence length
+            dec_seq_len: Decoder sequence length
+            save_path: Path to save the plot
         """
-        # Add input validation
-        if src.dim() != 3 or tgt.dim() != 3:
-            raise ValueError("Expected 3D tensors for src and tgt")
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
         
-        # Move inputs to device
-        src = src.to(self.device)
-        tgt = tgt.to(self.device)
-        if src_mask is not None:
-            src_mask = src_mask.to(self.device)
-        if tgt_mask is not None:
-            tgt_mask = tgt_mask.to(self.device)
+        # Loss plot
+        ax1.plot(train_losses, label='Train Loss', color='blue')
+        ax1.plot(test_losses, label='Test Loss', color='orange')
+        ax1.set_title('Loss', pad=20)
+        ax1.set_xlabel('Steps')
+        ax1.set_ylabel('Loss Value')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
         
-        # Encoder forward pass
-        encoder_embed = self.encoder_input_layer(src)
-        encoder_embed = self.positional_encoding(encoder_embed)
-        encoder_output = self.encoder(src=encoder_embed)
+        # ADE plot
+        ax2.plot(train_ades, label='Train ADE', color='blue')
+        ax2.plot(test_ades, label='Test ADE', color='orange')
+        ax2.plot(train_best_ades, label='Train Best ADE', color='blue', linestyle='--')
+        ax2.plot(test_best_ades, label='Test Best ADE', color='orange', linestyle='--')
+        ax2.set_title('Average Displacement Error (ADE)', pad=20)
+        ax2.set_xlabel('Steps')
+        ax2.set_ylabel('ADE Value')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
         
-        # Decoder forward pass
-        decoder_embed = self.decoder_input_layer(tgt)
-        decoder_embed = self.positional_encoding(decoder_embed)
-        decoder_output = self.decoder(
-            tgt=decoder_embed,
-            memory=encoder_output,
-            tgt_mask=tgt_mask
-            # memory_mask=src_mask
-        )
+        # FDE plot
+        ax3.plot(train_fdes, label='Train FDE', color='blue')
+        ax3.plot(test_fdes, label='Test FDE', color='orange')
+        ax3.plot(train_best_fdes, label='Train Best FDE', color='blue', linestyle='--')
+        ax3.plot(test_best_fdes, label='Test Best FDE', color='orange', linestyle='--')
+        ax3.set_title('Final Displacement Error (FDE)', pad=20)
+        ax3.set_xlabel('Steps')
+        ax3.set_ylabel('FDE Value')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
         
+        # Adjust layout and save
+        plt.tight_layout()
+        os.makedirs(self.log_save_path, exist_ok=True)
+        save_file = os.path.join(self.log_save_path, f'training_metrics_model_{enc_seq_len}_{dec_seq_len}.png')
+        plt.savefig(save_file, dpi=300, bbox_inches='tight')
+        plt.close()
 
-        # Compute embeddings
-        sigma_embedded = self.embedding_sigma(decoder_output)
-        mue_embedded = self.embedding_mue(decoder_output)
-        pi_embedded = self.embedding_pi(decoder_output)  # <-- Apply embedding to pi
-
-        
-        # Mixture weights (apply softmax)
-        pi = torch.softmax(self.pis_head(pi_embedded), dim=-1)
-        
-        # Compute Sigmas with softplus to ensure positivity
-        sigma = nn.functional.softplus(self.sigma_head(sigma_embedded))
-        sigma_x, sigma_y = sigma.chunk(2, dim=-1)
-        
-        # Compute Means
-        mu = self.mu_head(mue_embedded)
-        mu_x, mu_y = mu.chunk(2, dim=-1)
-        
-        return pi, sigma_x,sigma_y, mu_x ,mu_y #,decoder_output
-  
-
-
-class Embeddings(nn.Module):
-    def __init__(self, d_model, vocab):
-        super(Embeddings, self).__init__()
-        # lut => lookup table
-        self.lut = nn.Embedding(vocab, d_model)
-        self.d_model = d_model
-
-    def forward(self, x):
-        return self.lut(x) * math.sqrt(self.d_model)
 class Linear_Embeddings(nn.Module):
     def __init__(self, input_features,d_model):
         super(Linear_Embeddings, self).__init__()
-        # lut => lookup table
         self.lut = nn.Linear(input_features, d_model)
         self.d_model = d_model
 
     def forward(self, x):
         return self.lut(x) * math.sqrt(self.d_model)
 
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model: int, dropout: float = 0.0, max_len: int = 5000, batch_first: bool=True):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        self.batch_first = batch_first
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        if batch_first: 
+            pe = torch.zeros(1,max_len, d_model)
+            pe[0,:, 0::2] = torch.sin(position * div_term)
+            pe[0,:, 1::2] = torch.cos(position * div_term)
+        else: 
+            pe = torch.zeros(max_len, 1, d_model)
+            pe[:, 0, 0::2] = torch.sin(position * div_term)
+            pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Args:
+            x: Tensor, shape [seq_len, batch_size, embedding_dim] 
+            x: Tensor, shape [batch_size, seq_len, embedding_dim]batch first
+        """
+        #print("pe[:,:x.size(1),:] shape: ",self.pe.shape)
+        x = x + self.pe[:,:x.size(1),:] if self.batch_first else x + self.pe[:x.size(0)]
+
+        return self.dropout(x)
+# class MetricTracker:
+#     def __init__(self):
+#         self.train_available = False
+#         self.test_available = False
+
+#         # Separate running metrics for train and test
+#         self.running_metrics = {
+#             'train': self._init_metric_dict(),
+#             'test': self._init_metric_dict()
+#         }
+        
+#         self.history = {
+#             'train_loss': [], 'test_loss': [],
+#             'train_ade': [], 'test_ade': [],
+#             'train_fde': [], 'test_fde': [],
+#             'train_best_ade': [], 'test_best_ade': [],
+#             'train_best_fde': [], 'test_best_fde': []
+#         }
+
+#         self.best_metrics = {'ade': float('inf'), 'epoch': 0}
+        
+#         # Add batch tracking
+#         self.current_batch_metrics = {
+#             'train': self._init_metric_dict(),
+#             'test': self._init_metric_dict()
+#         }
+
+#     def _init_metric_dict(self):
+#         """Helper to initialize metrics dictionary."""
+#         return {key: {'value': 0, 'count': 0} for key in ['loss', 'ade', 'fde', 'best_ade', 'best_fde']}
+    
+#     def update(self, metrics_dict, batch_size, phase='train'):
+#         """Update running metrics with batch results and store history"""
+#         # Update epoch running totals
+#         for key, value in metrics_dict.items():
+#             self.running_metrics[phase][key]['value'] += value * batch_size
+#             self.running_metrics[phase][key]['count'] += batch_size
+            
+#             # Update current batch metrics
+#             self.current_batch_metrics[phase][key]['value'] = value
+#             self.current_batch_metrics[phase][key]['count'] = 1
+
+#         # # If all batches are processed (end of epoch), store history
+#         # if phase == 'train':
+#         #     epoch_metrics = self.get_averages(phase='train', mode='epoch')
+#         #     self.history['train_loss'].append(epoch_metrics['loss'])
+#         #     self.history['train_ade'].append(epoch_metrics['ade'])
+#         #     self.history['train_fde'].append(epoch_metrics['fde'])
+#         #     self.history['train_best_ade'].append(epoch_metrics['best_ade'])
+#         #     self.history['train_best_fde'].append(epoch_metrics['best_fde'])
+        
+#         # elif phase == 'test':
+#         #     epoch_metrics = self.get_averages(phase='test', mode='epoch')
+#         #     self.history['test_loss'].append(epoch_metrics['loss'])
+#         #     self.history['test_ade'].append(epoch_metrics['ade'])
+#         #     self.history['test_fde'].append(epoch_metrics['fde'])
+#         #     self.history['test_best_ade'].append(epoch_metrics['best_ade'])
+#         #     self.history['test_best_fde'].append(epoch_metrics['best_fde'])
+
+#     def get_averages(self, phase='train', mode='epoch'):
+#         """
+#         Compute averages for specified phase.
+        
+#         Args:
+#             phase (str): 'train' or 'test'
+#             mode (str): 'epoch' for running averages, 'batch' for current batch
+#         """
+#         if phase not in self.running_metrics:
+#             raise ValueError(f"Invalid phase '{phase}'. Must be 'train' or 'test'.")
+            
+#         metrics = self.running_metrics[phase] if mode == 'epoch' else self.current_batch_metrics[phase]
+        
+#         return {
+#             key: (metric['value'] / metric['count'] if metric['count'] > 0 else 0)
+#             for key, metric in metrics.items()
+#         }
+#     def compute_epoch_metrics(self, phase='train'):
+#         """Compute and store metrics for completed epoch."""
+#         epoch_metrics = self.get_averages(phase)
+        
+#         # Store epoch averages in history
+#         self.history[f'{phase}_loss'].append(epoch_metrics['loss'])
+#         self.history[f'{phase}_ade'].append(epoch_metrics['ade'])
+#         self.history[f'{phase}_fde'].append(epoch_metrics['fde'])
+#         self.history[f'{phase}_best_ade'].append(epoch_metrics['best_ade'])
+#         self.history[f'{phase}_best_fde'].append(epoch_metrics['best_fde'])
+
+#         # Reset running metrics for next epoch
+#         self.running_metrics[phase] = self._init_metric_dict()
+        
+#         return epoch_metrics
+
+#     def print_epoch_metrics(self, epoch, epochs, verbose=True):
+#         """Print epoch metrics including best-of-N results."""
+#         if not verbose:
+#             return
+
+#         logger = logging.getLogger('AttentionGMM')
+#         train_avgs = self.get_averages('train', mode='epoch')
+#         test_avgs = self.get_averages('test', mode='epoch')
+
+#         # Calculate improvements from previous epoch
+#         if epoch > 0:
+#             train_improvements = {
+#                 'loss': self.history['train_loss'][-2] - train_avgs['loss'],
+#                 'ade': self.history['train_ade'][-2] - train_avgs['ade'],
+#                 'fde': self.history['train_fde'][-2] - train_avgs['fde'],
+#                 'best_ade': self.history['train_best_ade'][-2] - train_avgs['best_ade'],
+#                 'best_fde': self.history['train_best_fde'][-2] - train_avgs['best_fde']
+#             }
+#             test_improvements = {
+#                 'loss': self.history['test_loss'][-2] - test_avgs['loss'],
+#                 'ade': self.history['test_ade'][-2] - test_avgs['ade'],
+#                 'fde': self.history['test_fde'][-2] - test_avgs['fde'],
+#                 'best_ade': self.history['test_best_ade'][-2] - test_avgs['best_ade'],
+#                 'best_fde': self.history['test_best_fde'][-2] - test_avgs['best_fde']
+#             } if self.test_available else None
+
+#         logger.info(f"\nEpoch [{epoch+1}/{epochs}]")
+#         logger.info("-" * 80)
+
+#         if self.train_available:
+#             logger.info("Training Metrics:")
+#             logger.info(f"  Loss:     {train_avgs['loss']:.4f} " + 
+#                     (f"(↓ {train_improvements['loss']:.4f})" if epoch > 0 else ""))
+#             logger.info(f"  ADE:      {train_avgs['ade']:.4f} " + 
+#                     (f"(↓ {train_improvements['ade']:.4f})" if epoch > 0 else ""))
+#             logger.info(f"  FDE:      {train_avgs['fde']:.4f} " + 
+#                     (f"(↓ {train_improvements['fde']:.4f})" if epoch > 0 else ""))
+#             logger.info(f"  Best ADE: {train_avgs['best_ade']:.4f} " + 
+#                     (f"(↓ {train_improvements['best_ade']:.4f})" if epoch > 0 else ""))
+#             logger.info(f"  Best FDE: {train_avgs['best_fde']:.4f} " + 
+#                     (f"(↓ {train_improvements['best_fde']:.4f})" if epoch > 0 else ""))
+
+#         if self.test_available:
+#             logger.info("\nValidation Metrics:")
+#             logger.info(f"  Loss:     {test_avgs['loss']:.4f} " + 
+#                     (f"(↓ {test_improvements['loss']:.4f})" if epoch > 0 else ""))
+#             logger.info(f"  ADE:      {test_avgs['ade']:.4f} " + 
+#                     (f"(↓ {test_improvements['ade']:.4f})" if epoch > 0 else ""))
+#             logger.info(f"  FDE:      {test_avgs['fde']:.4f} " + 
+#                     (f"(↓ {test_improvements['fde']:.4f})" if epoch > 0 else ""))
+#             logger.info(f"  Best ADE: {test_avgs['best_ade']:.4f} " + 
+#                     (f"(↓ {test_improvements['best_ade']:.4f})" if epoch > 0 else ""))
+#             logger.info(f"  Best FDE: {test_avgs['best_fde']:.4f} " + 
+#                     (f"(↓ {test_improvements['best_fde']:.4f})" if epoch > 0 else ""))
+        
+#         logger.info("-" * 80)
+
+#     def reset(self, phase='train'):
+#         """Reset running metrics for specified phase."""
+#         self.running_metrics[phase] = self._init_metric_dict()
+#         self.current_batch_metrics[phase] = self._init_metric_dict()
 
 
+class MetricTracker:
+    def __init__(self):
+        self.train_available = False
+        self.test_available = False
+
+        # Separate running metrics for train and test
+        self.running_metrics = {
+            'train': self._init_metric_dict(),
+            'test': self._init_metric_dict()
+        }
+        
+        self.history = {
+            'train_loss': [], 'test_loss': [],
+            'train_ade': [], 'test_ade': [],
+            'train_fde': [], 'test_fde': [],
+            'train_best_ade': [], 'test_best_ade': [],
+            'train_best_fde': [], 'test_best_fde': []
+        }
+
+        self.best_metrics = {'ade': float('inf'), 'epoch': 0}
+
+    def _init_metric_dict(self):
+        """Helper to initialize metrics dictionary."""
+        return {key: {'value': 0, 'count': 0} for key in ['loss', 'ade', 'fde', 'best_ade', 'best_fde']}
+    
+    def update(self, metrics_dict, batch_size, phase='train'):
+        """Update running metrics with batch results"""
+        for key, value in metrics_dict.items():
+            self.running_metrics[phase][key]['value'] += value * batch_size
+            self.running_metrics[phase][key]['count'] += batch_size
+
+    def get_averages(self, phase='train'):
+        """Compute averages for specified phase."""
+        if phase not in self.running_metrics:
+            raise ValueError(f"Invalid phase '{phase}'. Must be 'train' or 'test'.")
+
+        return {
+            key: (metric['value'] / metric['count'] if metric['count'] > 0 else 0)
+            for key, metric in self.running_metrics[phase].items()
+        }
+
+    def compute_epoch_metrics(self, phase='train'):
+        """Compute and store metrics for completed epoch."""
+        epoch_metrics = self.get_averages(phase)
+        
+        # Store epoch averages in history
+        self.history[f'{phase}_loss'].append(epoch_metrics['loss'])
+        self.history[f'{phase}_ade'].append(epoch_metrics['ade'])
+        self.history[f'{phase}_fde'].append(epoch_metrics['fde'])
+        self.history[f'{phase}_best_ade'].append(epoch_metrics['best_ade'])
+        self.history[f'{phase}_best_fde'].append(epoch_metrics['best_fde'])
+
+        # Reset running metrics for next epoch
+        self.running_metrics[phase] = self._init_metric_dict()
+        
+        return epoch_metrics
+
+    def get_current_epoch_metrics(self, phase='train'):
+        """Get most recent epoch metrics."""
+        if not self.history[f'{phase}_loss']:  # if history is empty
+            return None
+            
+        return {
+            'loss': self.history[f'{phase}_loss'][-1],
+            'ade': self.history[f'{phase}_ade'][-1],
+            'fde': self.history[f'{phase}_fde'][-1],
+            'best_ade': self.history[f'{phase}_best_ade'][-1],
+            'best_fde': self.history[f'{phase}_best_fde'][-1]
+        }
+
+    def get_previous_epoch_metrics(self, phase='train'):
+        """Get previous epoch metrics."""
+        if len(self.history[f'{phase}_loss']) < 2:  # need at least 2 epochs
+            return None
+            
+        return {
+            'loss': self.history[f'{phase}_loss'][-2],
+            'ade': self.history[f'{phase}_ade'][-2],
+            'fde': self.history[f'{phase}_fde'][-2],
+            'best_ade': self.history[f'{phase}_best_ade'][-2],
+            'best_fde': self.history[f'{phase}_best_fde'][-2]
+        }
+
+    def print_epoch_metrics(self, epoch, epochs, verbose=True):
+        """Print epoch metrics including best-of-N results."""
+        if not verbose:
+            return
+
+        logger = logging.getLogger('AttentionGMM')
+        
+        # Get current metrics from history
+        train_metrics = self.get_current_epoch_metrics('train')
+        test_metrics = self.get_current_epoch_metrics('test') if self.test_available else None
+
+        # Calculate improvements from previous epoch metrics
+        train_prev = self.get_previous_epoch_metrics('train')
+        test_prev = self.get_previous_epoch_metrics('test') if self.test_available else None
+
+        logger.info(f"\nEpoch [{epoch+1}/{epochs}]")
+        logger.info("-" * 80)
+
+        # Training metrics
+        if self.train_available and train_metrics:  # Add check for train_metrics
+            logger.info("Training Metrics:")
+            for metric, name in [('loss', 'Loss'), ('ade', 'ADE'), ('fde', 'FDE'),
+                            ('best_ade', 'Best ADE'), ('best_fde', 'Best FDE')]:
+                current_value = train_metrics[metric]
+                if train_prev:
+                    improvement = train_prev[metric] - current_value
+                    logger.info(f"  {name:8} {current_value:.4f} (↓ {improvement:.4f})")
+                else:
+                    logger.info(f"  {name:8} {current_value:.4f}")
+
+        # Test metrics
+        if self.test_available and test_metrics:  # Add check for test_metrics
+            logger.info("\nValidation Metrics:")
+            for metric, name in [('loss', 'Loss'), ('ade', 'ADE'), ('fde', 'FDE'),
+                            ('best_ade', 'Best ADE'), ('best_fde', 'Best FDE')]:
+                current_value = test_metrics[metric]
+                if test_prev:
+                    improvement = test_prev[metric] - current_value
+                    logger.info(f"  {name:8} {current_value:.4f} (↓ {improvement:.4f})")
+                else:
+                    logger.info(f"  {name:8} {current_value:.4f}")
+
+        logger.info("-" * 80)
+    def reset(self, phase='train'):
+        """Reset running metrics for specified phase."""
+        self.running_metrics[phase] = self._init_metric_dict()

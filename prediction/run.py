@@ -127,4 +127,4 @@ if __name__ == '__main__':
                                 args.normalize,
                                 args.checkpoint)
     predictor.train(train_loader,test_loader) 
-    predictor.evaluate(test_loader)
+    # predictor.evaluate(test_loader)
