@@ -305,7 +305,7 @@ def generate_intention_settings(past_trajectory, future_trajectory, splits, anno
     return data_folder
 
 
-def generate_intention_cross_validation_settings(past_trajectory, future_trajectory, annotations, n_splits=5):
+def generate_intention_cross_validation_settings(past_trajectory, future_trajectory, annotations, max_observation_length, n_splits=5):
     """
     Generate cross-validation folds (train/test) including future intention labels.
 
@@ -313,6 +313,8 @@ def generate_intention_cross_validation_settings(past_trajectory, future_traject
         past_trajectory (int): # of past frames
         future_trajectory (int): # of future frames
         annotations (list of str): annotation file paths
+        !!!!!!max_observation_length!!!!!!!!!!!!: if generating different settings with varying past trajectory, 
+            this setting makes sure that train and test samples are same but with different past trajectory  
         n_splits (int): number of cross-validation folds
 
     Returns:
@@ -332,20 +334,20 @@ def generate_intention_cross_validation_settings(past_trajectory, future_traject
             data = json.load(file)
             for k, v in data.items():
                 trajectory = [bbox_to_xy(bbox) for bbox in v['bbox']]
-                offset = len(trajectory) - past_trajectory - future_trajectory
+                offset = len(trajectory) - max_observation_length - future_trajectory
                 num_sequences = int(offset) + 1
                 for i in range(num_sequences):
-                    r = i + past_trajectory
+                    r = i + max_observation_length
                     observation = trajectory[i:r]
                     target = trajectory[r:r+future_trajectory]
                     intention = v['intention'][r:r+future_trajectory]
                     
-                    if len(observation) < past_trajectory:
+                    if len(observation) < max_observation_length:
                         continue
                     if len(target) < future_trajectory:
                         continue
-
-                    # Each item is [obs_coords, future_coords, future_intentions]
+                    
+                    observation = observation[-past_trajectory:] 
                     intentions.append([observation, target, intention])
     
     # 5-Fold cross-validation

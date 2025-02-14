@@ -70,7 +70,7 @@ if __name__ == '__main__':
     p.add_argument('--num_workers', type=int, default=8, help='Number of workers for the DataLoader')
     p.add_argument('--normalize', default=False, type=bool, help='Normalize input data')
     p.add_argument('--batch_size', type=int, default=128, help='Batch size for training/testing')
-    p.add_argument('--device', type=str, default='cuda:0', choices=['cuda', 'cpu'], help='Device to run the model on')
+    p.add_argument('--device', type=str, default='cuda:1', choices=['cuda', 'cpu'], help='Device to run the model on')
     args = p.parse_args()
         
     ann_path = "../data/annotations" if not args.annotations_path else args.annotations_path
@@ -92,9 +92,11 @@ if __name__ == '__main__':
         predictor.evaluate(test_loader)
     
     else:
-        num_folds = 5  
+        num_folds = 5
+        max_observation_length = 20
+        
         data_folder = generate_intention_cross_validation_settings(
-            args.past_trajectory, args.future_trajectory, annotations, n_splits=num_folds
+            args.past_trajectory, args.future_trajectory, annotations, max_observation_length, n_splits=num_folds
         )
         
         # Lists for storing metrics for each fold.
@@ -110,7 +112,8 @@ if __name__ == '__main__':
         
             train_dataset = create_dataset(fold_path, args.model_setting, setting="train")
             test_dataset  = create_dataset(fold_path, args.model_setting, setting="test")
-            print("reached")
+            print(len(train_dataset))
+            print(len(test_dataset))
             train_loader  = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
             test_loader   = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
             
