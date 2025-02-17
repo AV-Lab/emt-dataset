@@ -147,16 +147,13 @@ def plot_predicted_intentions(video_path, intentions, predictor):
         if frame_idx in keep_frames:
             predicted_intentions = []
             if frame_jdx in intentions: 
-                frame_jdx += 1
-                continue
-            objects_to_plot = [d for d in intentions[frame_jdx] if len(d[4]) > 0]
-            observed_trajs = [d[0] for d in objects_to_plot]
-            predictions = predictor.predict(observed_trajs)
-            predicted_intentions = [(d[1][-1], d[4][0], pred[0]) for d, pred in zip(objects_to_plot, predictions)]
+                objects_to_plot = [d for d in intentions[frame_jdx] if len(d[4]) > 0]
+                observed_trajs = [d[0] for d in objects_to_plot]
+                predictions = predictor.predict(observed_trajs)
+                predicted_intentions = [(d[1][-1], d[4][0], pred[0]) for d, pred in zip(objects_to_plot, predictions)]
+                process_frame(frame, predicted_intentions)
             
             frame_jdx += 1
-    
-            process_frame(frame, predicted_intentions)
             cv2.namedWindow("Frame", cv2.WINDOW_NORMAL)
             cv2.imshow("Frame", frame)
             cv2.resizeWindow("Frame", 2560, 1440)

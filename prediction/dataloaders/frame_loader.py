@@ -11,7 +11,7 @@ import math
 import pickle
 from torch.utils.data import Dataset
 
-def compute_adjacency_matrix(locations, threshold=500, normalize=True):
+def compute_adjacency_matrix(locations, threshold=200, normalize=True):
     """
     Compute a simple adjacency matrix based on Euclidean distance,
     optionally do symmetrical normalization:  A_hat = D^-1/2 (A+I) D^-1/2
@@ -78,13 +78,10 @@ class GNNDataset(Dataset):
         """
         for video_id, frames in self.data.items():
             for frame_id, records in frames.items():
-                # Each 'records' is a list of (object_id, past_traj, curr_loc, future_traj)
                 object_ids, past_trajs, curr_locs, future_trajs = map(list, zip(*records))
                 
                 num_nodes = len(object_ids)
                 n = min(num_nodes, self.max_nodes)
-                
-                # Build a mask: 1.0 for valid nodes, 0.0 for padded
                 mask = torch.zeros(self.max_nodes, dtype=torch.float)
                 mask[:n] = 1.0
 
@@ -100,8 +97,7 @@ class GNNDataset(Dataset):
     
                 while len(inputs_list) < self.max_nodes:
                     inputs_list.append(torch.zeros(input_dim))
-                
-                inputs = torch.stack(inputs_list, dim=0)  # (max_nodes, input_dim)
+                inputs_ = torch.stack(inputs_list, dim=0)  
 
                 #Build adjency matrix
                 valid_curr_locs = curr_locs[:n]  # For adjacency among valid nodes
@@ -109,12 +105,11 @@ class GNNDataset(Dataset):
                 adj = torch.zeros(self.max_nodes, self.max_nodes)
                 adj[:n, :n] = adj_valid
 
-
                 inputs_list = []
                 targets_list = []
                 
                 for i in range(n):
-                    past_tensor = torch.tensor(past_trajs[i], dtype=torch.float)  # (T_past, 2)
+                    past_tensor = torch.tensor(past_trajs[i], dtype=torch.float)  
                     future_tensor = torch.tensor(future_trajs[i], dtype=torch.float)
                     if self.include_velocity:
                         vxvy_past = past_tensor[1:] - past_tensor[:-1]
@@ -123,14 +118,14 @@ class GNNDataset(Dataset):
                         vxvy_fut = future_tensor[1:] - future_tensor[:-1]
                         vxvy_fut = torch.cat([vxvy_fut[:1], vxvy_fut], dim=0)
                         future_tensor = torch.cat([future_tensor, vxvy_fut], dim=1)
-                    inputs_list.append(past_tensor)  # (T_past, 2 or 4)
-                    targets_list.append(future_tensor) # (T_future , 2 or 4)
+                    inputs_list.append(past_tensor)  
+                    targets_list.append(future_tensor) 
                     
                 if n > 0:
-                    T_past = inputs_list[0].shape[0]    # e.g. length
-                    feat_dim_past = inputs_list[0].shape[1]  # 2 or 4
+                    T_past = inputs_list[0].shape[0]  
+                    feat_dim_past = inputs_list[0].shape[1]  
                     T_future = targets_list[0].shape[0]
-                    feat_dim_fut = targets_list[0].shape[1]  # 2 or 4
+                    feat_dim_fut = targets_list[0].shape[1] 
                 else:
                     T_past = 0
                     feat_dim_past = 2 if not self.include_velocity else 4
@@ -143,14 +138,14 @@ class GNNDataset(Dataset):
                     pad_tgt = torch.zeros(self.max_nodes - n, T_future, feat_dim_fut)
                     targets_ = torch.cat([torch.stack(targets_list, dim=0), pad_tgt], dim=0)
                 else:
-                    inputs_ = torch.stack(inputs_list, dim=0)  # shape (n, T_past, feat_dim_past)
-                    targets_ = torch.stack(targets_list, dim=0) # (n, T_future, feat_dim_fut)
+                    inputs_ = torch.stack(inputs_list, dim=0) 
+                    targets_ = torch.stack(targets_list, dim=0) 
                 
-                inputs_ = inputs_.permute(1, 0, 2)  # shape => (T_past, max_nodes, feat_dim)
-                targets_ = targets_.permute(1, 0, 2)  # shape => (T_future, max_nodes, feat_dim)
+                inputs_ = inputs_.permute(1, 0, 2)  
+                targets_ = targets_.permute(1, 0, 2)  
                                 
 
-                self.samples.append((inputs, adj, targets_, mask))
+                self.samples.append((inputs_, adj, targets_, mask))
 
     def _calculate_distribution_parameters(self):
         """

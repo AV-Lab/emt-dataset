@@ -70,7 +70,7 @@ if __name__ == '__main__':
     p.add_argument('--num_workers', type=int, default=8, help='Number of workers for the DataLoader')
     p.add_argument('--normalize', default=False, type=bool, help='Normalize input data')
     p.add_argument('--batch_size', type=int, default=128, help='Batch size for training/testing')
-    p.add_argument('--device', type=str, default='cuda:1', choices=['cuda', 'cpu'], help='Device to run the model on')
+    p.add_argument('--device', type=str, default='cuda:0', choices=['cuda', 'cpu'], help='Device to run the model on')
     args = p.parse_args()
         
     ann_path = "../data/annotations" if not args.annotations_path else args.annotations_path
