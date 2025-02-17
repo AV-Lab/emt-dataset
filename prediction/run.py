@@ -3,7 +3,7 @@
 """
 Created on Sat Sep 28 18:08:42 2024
 
-@author: nadya started it but murad messed it up
+@author: nadya
 """
 
 import os
@@ -54,9 +54,9 @@ def create_predictor(past_trajectory, future_trajectory, max_nodes, predictor, d
     elif predictor == "gat":
         return GATPredictor(past_trajectory, future_trajectory, max_nodes, device, normalize, checkpoint_file) 
     elif predictor == 'transformer':
-        return AttentionEMT(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
+        return AttentionEMT(past_trajectory=past_trajectory, future_trajectory=future_trajectory, device=device, normalize=normalize, checkpoint_file=checkpoint_file)
     elif predictor == 'transformer-gmm':
-        return AttentionGMM(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
+        return AttentionGMM(past_trajectory=past_trajectory, future_trajectory=future_trajectory, device=device, normalize=normalize, checkpoint_file=checkpoint_file)
     else:
         return RNNPredictor(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
         
@@ -84,16 +84,15 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser(description='Run predictors')
     p.add_argument('past_trajectory', type=int, help='Past Trajectory')
     p.add_argument('future_trajectory', type=int, help='Prediction Horizon')
-    p.add_argument('predictor', type=str, choices=['lstm', 'gcn', 'gat', 'transformer', 'transformer_gmm'], help='Predictor type')
     p.add_argument('--window_size', default=1, type=int, help='Sliding window')
     p.add_argument('--max_nodes', type=int, default=40, help='Maximum number of nodes for GNN model')
-    p.add_argument('--predictor', type=str, default='transformer-gmm', choices=['lstm', 'gcn', 'gat', 'transformer','transformer-gmm'], help='Predictor type')
+    p.add_argument('--predictor', type=str, default='transformer', choices=['lstm', 'gcn', 'gat', 'transformer','transformer-gmm'], help='Predictor type')
     p.add_argument('--setting', type=str, default='train',choices=['train', 'evaluate'], help='Execution mode (train or evaluate)')
     p.add_argument('--checkpoint', type=str, default=None, help='Path to model checkpoint file, required if mode is evaluate')
     p.add_argument('--annotations_path', type=str, help='If annotations are placed in a location different from recommended')
     p.add_argument('--num_workers', type=int, default=8, help='Number of workers for dataloader')
     p.add_argument('--normalize', default=True, type=bool, help='Normalize data, recommended True')
-    p.add_argument('--batch_size', type=int, default=128, help='Batch size')
+    p.add_argument('--batch_size', type=int, default=64, help='Batch size')
     p.add_argument('--device', type=str, default='cuda:1', help='Device to run the model',choices=['cuda', 'cpu'])
     p.add_argument('--seed', type=int, default=42, help='Seed for reproducibility -> set zero for random seed generation')
 
@@ -127,5 +126,5 @@ if __name__ == '__main__':
                                  args.device,
                                  args.normalize,
                                  args.checkpoint)
-    predictor.train(train_loader) 
+    predictor.train(train_loader,test_loader) 
     predictor.evaluate(test_loader)
