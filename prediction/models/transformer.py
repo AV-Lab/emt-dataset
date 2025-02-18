@@ -229,6 +229,7 @@ class AttentionEMT(nn.Module):
         self.std = self.config.std.to(self.device)
         self.criterion = self.config.criterion
         
+        
     def _init_model_params(self):
         """Initialize model parameters."""
         self.num_heads = self.config.num_heads
@@ -249,6 +250,7 @@ class AttentionEMT(nn.Module):
 
         # Logging path
         self.log_save_path = self.config.log_save_path
+        self.checkpoint_file = self.config.checkpoint_file
     
     def _init_optimizer_params(self):
         # Store optimizer parameters
@@ -363,7 +365,6 @@ class AttentionEMT(nn.Module):
         return output
 
     
-    @classmethod
     def load_model(self, ckpt_path: str):
         """
         Load a complete model with all necessary state.
@@ -373,7 +374,8 @@ class AttentionEMT(nn.Module):
         """
         try:
             checkpoint = torch.load(ckpt_path, map_location=self.device)
-            self.load_state_dict(checkpoint['model_state_dict'])
+            self.load_state_dict(state_dict=checkpoint['model_state_dict'])
+            self.to(self.device)  # Move the entire model to device
             
             # Load and move tensors to device
             self.mean = checkpoint['train_mean'].to(self.device)
@@ -681,7 +683,7 @@ class AttentionEMT(nn.Module):
                 }
             }
             # Save the model
-            checkpoint_name = f'Transformer_P_{self.past_trajectory}_F_{self.future_trajectory}_Warm_{self.n_warmup_steps}_W_{self.config.win_size}_lr_mul_{self.lr_mul}.pth'
+            checkpoint_name = f'Transformer_P_{self.past_trajectory}_F_{self.future_trajectory}_Warm_{self.n_warmup_steps}_W_{self.config.win_size}_lr_mul_{self.lr_mul}_epoch_{epoch}.pth'
             os.makedirs(save_path, exist_ok=True)
             torch.save(model_state, os.path.join(models_dir, f"{checkpoint_name}"))
             logger.info(f"Saved checkpoint to: {save_path}")
@@ -703,7 +705,11 @@ class AttentionEMT(nn.Module):
         
         try:
             if not from_train:
-                self.load_model(ckpt_path, device=self.device)                                                     
+                self.load_model(self.checkpoint_file)  
+                # Setup logger
+                logger = logging.getLogger('AttentionEMT')
+                if not logger.handlers:
+                    logger = self.setup_logger(save_path=self.log_save_path,eval=True)                                                   
            
             # Set evaluation mode :  Need to use nn.Module's train method for mode setting
             super().train(False)  
@@ -754,7 +760,7 @@ class AttentionEMT(nn.Module):
             self.tracker.compute_epoch_metrics(phase='test')
             # Print epoch metrics
             if not from_train:
-                self.tracker.print_epoch_metrics(epoch=1, epochs=1, verbose=True)
+                self.tracker.print_epoch_metrics(epoch=0, epochs=1, verbose=True)
         except Exception as e:
             logger.error(f"Error during evaluation: {str(e)}")
             raise        
@@ -799,7 +805,7 @@ class AttentionEMT(nn.Module):
 
         return mask
     
-    def setup_logger(self,name: str = 'AttentionEMT', save_path: str = None, level=logging.INFO):
+    def setup_logger(self,name: str = 'AttentionEMT', save_path: str = None, level=logging.INFO,eval=False):
         """Set up logger configuration.
         
         Args:
@@ -830,7 +836,10 @@ class AttentionEMT(nn.Module):
         
         # File handler if save_path is provided
         if save_path:
-            log_path = Path(save_path) / f'transformer_training_metrics_model_{self.past_trajectory}_{self.future_trajectory}_training_{self.n_warmup_steps}_W_{self.config.win_size}_lr_mul_{self.lr_mul}.log'
+            if eval: 
+                log_path = Path(save_path) / f'transformer_eval_metrics_model_{self.past_trajectory}_{self.future_trajectory}_W_{self.config.win_size}.log'
+            else:
+                 log_path = Path(save_path) / f'transformer_training_metrics_model_{self.past_trajectory}_{self.future_trajectory}_training_{self.n_warmup_steps}_W_{self.config.win_size}_lr_mul_{self.lr_mul}.log'
             log_path.parent.mkdir(parents=True, exist_ok=True)
             file_handler = logging.FileHandler(str(log_path),mode='w')
             file_handler.setFormatter(detailed_formatter)
