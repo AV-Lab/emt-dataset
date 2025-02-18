@@ -433,49 +433,47 @@ class AttentionEMT(nn.Module):
             n_warmup_steps=n_warmup_steps
         )
     
-    def check_early_stopping(self, current_metrics: dict, verbose: bool = True) -> Tuple[bool, dict]:
-            """
-            Check if training should stop based on the current metrics.
+    def check_early_stopping(self, current_metrics: dict, verbose: bool = True, metric='ade') -> Tuple[bool, dict]:
+        """
+        Check if training should stop based on the specified metric.
+        
+        Args:
+            current_metrics (dict): Dictionary containing current metric values
+            verbose (bool): Whether to print early stopping information
+            metric (str): The specific metric to monitor for early stopping
             
-            Args:
-                current_metrics (dict): Dictionary containing current metric values
-                verbose (bool): Whether to print early stopping information
-                
-            Returns:
-                Tuple[bool, dict]: (should_stop, best_metrics)
-            """
-            should_stop = True
-            logger = logging.getLogger('AttentionEMT')
+        Returns:
+            Tuple[bool, dict]: (should_stop, best_metrics)
+        """
+        should_stop = True
+        logger = logging.getLogger('AttentionEMT')  # Changed from AttentionGMM to match your class
+        
+        # Only check the specified metric
+        if metric in current_metrics and metric in self.best_metrics:
+            current_value = current_metrics[metric]
             
-            # Check each metric for improvement
-            for metric_name, current_value in current_metrics.items():
-                if metric_name not in self.best_metrics:
-                    continue
-                    
-                # Check if the current value is better than the best value
-                if current_value < (self.best_metrics[metric_name] + self.config.early_stopping_delta):
-                    self.best_metrics[metric_name] = current_value
-                    should_stop = False
-            
-            # Update counter based on improvement
-            if should_stop:
-                self._early_stop_counter += 1
-                if verbose and self._early_stop_counter > 0:
-                    logger.info(f"\nNo improvement in metrics for {self._early_stop_counter} epochs.")
-            else:
-                self._early_stop_counter = 0
-            
-            # Check if we should stop training
-            should_stop = self._early_stop_counter >= self.config.early_stopping_patience
-            
+            # Check if the current value is better than the best value
+            if current_value < (self.best_metrics[metric] + self.config.early_stopping_delta):
+                self.best_metrics[metric] = current_value
+                should_stop = False
+        
+        # Update counter based on improvement
+        if should_stop:
+            self._early_stop_counter += 1
+            if verbose and self._early_stop_counter > 0:
+                logger.info(f"\nNo improvement in {metric} for {self._early_stop_counter} epochs.")
+        else:
+            self._early_stop_counter = 0
+        
+        # Check if we should stop training
+        should_stop = self._early_stop_counter >= self.config.early_stopping_patience
+        
         # Log early stopping information if triggered
-            if should_stop and verbose:
-                logger.info(f"\nEarly stopping triggered after {self._early_stop_counter} epochs without improvement")
-                logger.info("Best metrics achieved:")
-                for metric, value in self.best_metrics.items():
-                    logger.info(f"Best {metric.upper()}: {value:.4f}")
-            
-            return should_stop, self.best_metrics.copy()     
+        if should_stop and verbose:
+            logger.info(f"\nEarly stopping triggered after {self._early_stop_counter} epochs without improvement in {metric}")
+            logger.info(f"Best {metric.upper()}: {self.best_metrics[metric]:.4f}")
+        
+        return should_stop, self.best_metrics.copy()
     
     def calculate_metrics(self,pred: torch.Tensor, target: torch.Tensor, obs_last_pos: torch.Tensor) -> Tuple[float, float]:
         """
@@ -506,11 +504,11 @@ class AttentionEMT(nn.Module):
         self,
         train_dl: DataLoader,
         test_dl: DataLoader = None,
-        epochs: int = 100,
+        epochs: int = 85,
         verbose: bool = True,
         save_path: str = 'results',
         save_model: bool = True,
-        save_frequency: int = 20,
+        save_frequency: int = 80,
     ) -> Tuple[nn.Module, Dict]:
         """
         Train the model with metrics tracking and visualization.
@@ -614,7 +612,7 @@ class AttentionEMT(nn.Module):
             self.tracker.compute_epoch_metrics(phase='train')
             
             # Test evaluation
-            if test_dl is not None:
+            if test_dl is not None and (epoch+1)%5 ==0:
                 self.evaluate(test_dl,from_train=True)
 
             # Print epoch metrics
@@ -623,11 +621,12 @@ class AttentionEMT(nn.Module):
             # Check early stopping conditions
             phase = 'test' if test_dl else 'train'
             current_metrics = {
+                'loss': self.tracker.get_averages(phase)['loss'],
                 'ade': self.tracker.get_averages(phase)['ade'],
                 'fde': self.tracker.get_averages(phase)['fde']
             }
             
-            should_stop, best_metrics = self.check_early_stopping(current_metrics, verbose)
+            should_stop, best_metrics = self.check_early_stopping(current_metrics, verbose,metric='ade')
 
             # Save model if save_frequency reached 
             self._save_checkpoint(optimizer, epoch,save_model,save_frequency,save_path)
@@ -657,7 +656,7 @@ class AttentionEMT(nn.Module):
         
         return self, self.tracker.history
     
-    def _save_checkpoint(self,optimizer, epoch =10,save_model=True,save_frequency=10,save_path="/results"):
+    def _save_checkpoint(self,optimizer, epoch=10,save_model=True,save_frequency=10,save_path="/results"):
         # Set up directory structure
         models_dir = os.path.join(save_path, 'pretrained_models')
         os.makedirs(models_dir, exist_ok=True)

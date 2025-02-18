@@ -62,6 +62,7 @@ class ModelConfig:
 
     # logging:
     log_save_path = 'results/metrics/training_metrics'
+    
 
     def __post_init__(self):
         """Post-init processing."""
@@ -249,6 +250,7 @@ class AttentionGMM(nn.Module):
 
         # Logging path
         self.log_save_path = self.config.log_save_path
+        self.checkpoint_file = self.config.checkpoint_file
     
     def _init_optimizer_params(self):
         # Store optimizer parameters
@@ -498,13 +500,16 @@ class AttentionGMM(nn.Module):
                 
                 # Backward pass
                 train_loss.backward()
-                total_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=10.0)
+                total_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
                 # print(f"Gradient Norm: {total_norm:.4f}")
                 optimizer.step_and_update_lr()
 
                 with torch.no_grad(): # to avoid data leakage during sampling
                     
                     highest_prob_pred, best_of_n_pred = self._sample_gmm_predictions(pi, sigmas, mus,target)
+                    batch_trajs,batch_weights,best_trajs,best_weights = self._run_cluster(mus,pi)
+                    print(batch_trajs.shape,batch_weights.shape)
+                    print(batch_trajs[0][0],batch_weights[0])
                     
                     obs_last_pos = obs_tensor[:, -1:, 0:2]
 
@@ -548,41 +553,17 @@ class AttentionGMM(nn.Module):
             # Check early stopping conditions
             phase = 'test' if test_dl else 'train'
             current_metrics = {
+                'loss':self.tracker.get_averages(phase)['loss'],
                 'ade': self.tracker.get_averages(phase)['ade'],
                 'fde': self.tracker.get_averages(phase)['fde'],
                 'best_ade': self.tracker.get_averages(phase)['best_ade'],
                 'best_fde': self.tracker.get_averages(phase)['best_fde']
             }
             
-            should_stop, best_metrics = self.check_early_stopping(current_metrics, verbose)
+            should_stop, best_metrics = self.check_early_stopping(current_metrics, verbose,stop_metric='loss')
 
-            if save_model and (epoch + 1) % save_frequency == 0:
-                model_state = {
-                    'model_state_dict': self.state_dict(),  # Save directly
-                    'optimizer_state_dict': optimizer._optimizer.state_dict(),
-                    'training_history': self.tracker.history,
-                    'best_metrics': self.tracker.best_metrics,
-                    'train_mean': self.mean,
-                    'train_std': self.std,
-                    'num_gaussians': self.num_gaussians,
-                    'model_config': {
-                        # Only save what you actually use for loading
-                        'in_features': self.input_features,
-                        'out_features': self.output_features,
-                        'num_heads': self.num_heads,
-                        'num_encoder_layers': self.config.num_encoder_layers,
-                        'num_decoder_layers': self.config.num_decoder_layers,
-                        'embedding_size': self.d_model,
-                        'dropout': self.dropout_encoder
-                    }
-                }
-                # torch.save(model_state, os.path.join(models_dir, checkpoint_name))
-                # Save the model
-                checkpoint_name = f'GMM_transformer_P_{self.past_trajectory}_F_{self.future_trajectory}_Warm_{self.n_warmup_steps}_W_{self.config.win_size}.pth'
-                os.makedirs(save_path, exist_ok=True)
-                torch.save(model_state, os.path.join(models_dir, f"{checkpoint_name}"))
-                logger.info(f"Saved checkpoint to: {save_path}")
-
+            # Save model if save_frequency reached 
+            self._save_checkpoint(optimizer, epoch,save_model,save_frequency,save_path)
             
             # Break if early stopping triggered
             if should_stop:
@@ -613,7 +594,38 @@ class AttentionGMM(nn.Module):
 
         return self, self.tracker.history
 
-    @classmethod
+    def _save_checkpoint(self,optimizer, epoch=10,save_model=True,save_frequency=10,save_path="/results"):
+        # Set up directory structure
+        models_dir = os.path.join(save_path, 'pretrained_models')
+        os.makedirs(models_dir, exist_ok=True)
+        logger = logging.getLogger('AttentionGMM')
+
+        if save_model and (epoch + 1) % save_frequency == 0:
+            model_state = {
+                'model_state_dict': self.state_dict(),  # Save directly
+                'optimizer_state_dict': optimizer._optimizer.state_dict(),
+                'training_history': self.tracker.history,
+                'best_metrics': self.tracker.best_metrics,
+                'train_mean': self.mean,
+                'train_std': self.std,
+                'num_gaussians': self.num_gaussians,
+                'model_config': {
+                    # Only save what you actually use for loading
+                    'in_features': self.input_features,
+                    'out_features': self.output_features,
+                    'num_heads': self.num_heads,
+                    'num_encoder_layers': self.config.num_encoder_layers,
+                    'num_decoder_layers': self.config.num_decoder_layers,
+                    'embedding_size': self.d_model,
+                    'dropout': self.dropout_encoder
+                }
+            }
+            # torch.save(model_state, os.path.join(models_dir, checkpoint_name))
+            # Save the model
+            checkpoint_name = f'GMM_transformer_P_{self.past_trajectory}_F_{self.future_trajectory}_Warm_{self.n_warmup_steps}_W_{self.config.win_size}.pth'
+            os.makedirs(save_path, exist_ok=True)
+            torch.save(model_state, os.path.join(models_dir, f"{checkpoint_name}"))
+            logger.info(f"Saved checkpoint to: {save_path}")
     def load_model(self, ckpt_path: str):
         """
         Load a complete model with all necessary state.
@@ -623,7 +635,8 @@ class AttentionGMM(nn.Module):
         """
         try:
             checkpoint = torch.load(ckpt_path, map_location=self.device)
-            self.load_state_dict(checkpoint['model_state_dict'])
+            self.load_state_dict(state_dict=checkpoint['model_state_dict'])
+            self.to(self.device)  # Move the entire model to device
             
             # Load and move tensors to device
             self.mean = checkpoint['train_mean'].to(self.device)
@@ -810,49 +823,47 @@ class AttentionGMM(nn.Module):
             raise ValueError("NaN values detected in loss computation")
 
         return torch.mean(neg_log_likelihood)
-    def check_early_stopping(self, current_metrics: dict, verbose: bool = True) -> Tuple[bool, dict]:
-            """
-            Check if training should stop based on the current metrics.
+    def check_early_stopping(self, current_metrics: dict, verbose: bool = True, metric='ade') -> Tuple[bool, dict]:
+        """
+        Check if training should stop based on the specified metric.
+        
+        Args:
+            current_metrics (dict): Dictionary containing current metric values
+            verbose (bool): Whether to print early stopping information
+            metric (str): The specific metric to monitor for early stopping
             
-            Args:
-                current_metrics (dict): Dictionary containing current metric values
-                verbose (bool): Whether to print early stopping information
-                
-            Returns:
-                Tuple[bool, dict]: (should_stop, best_metrics)
-            """
-            should_stop = True
-            logger = logging.getLogger('AttentionGMM')
+        Returns:
+            Tuple[bool, dict]: (should_stop, best_metrics)
+        """
+        should_stop = True
+        logger = logging.getLogger('AttentionEMT')  # Changed from AttentionGMM to match your class
+        
+        # Only check the specified metric
+        if metric in current_metrics and metric in self.best_metrics:
+            current_value = current_metrics[metric]
             
-            # Check each metric for improvement
-            for metric_name, current_value in current_metrics.items():
-                if metric_name not in self.best_metrics:
-                    continue
-                    
-                # Check if the current value is better than the best value
-                if current_value < (self.best_metrics[metric_name] + self.config.early_stopping_delta):
-                    self.best_metrics[metric_name] = current_value
-                    should_stop = False
-            
-            # Update counter based on improvement
-            if should_stop:
-                self._early_stop_counter += 1
-                if verbose and self._early_stop_counter > 0:
-                    logger.info(f"\nNo improvement in metrics for {self._early_stop_counter} epochs.")
-            else:
-                self._early_stop_counter = 0
-            
-            # Check if we should stop training
-            should_stop = self._early_stop_counter >= self.config.early_stopping_patience
-            
+            # Check if the current value is better than the best value
+            if current_value < (self.best_metrics[metric] + self.config.early_stopping_delta):
+                self.best_metrics[metric] = current_value
+                should_stop = False
+        
+        # Update counter based on improvement
+        if should_stop:
+            self._early_stop_counter += 1
+            if verbose and self._early_stop_counter > 0:
+                logger.info(f"\nNo improvement in {metric} for {self._early_stop_counter} epochs.")
+        else:
+            self._early_stop_counter = 0
+        
+        # Check if we should stop training
+        should_stop = self._early_stop_counter >= self.config.early_stopping_patience
+        
         # Log early stopping information if triggered
-            if should_stop and verbose:
-                logger.info(f"\nEarly stopping triggered after {self._early_stop_counter} epochs without improvement")
-                logger.info("Best metrics achieved:")
-                for metric, value in self.best_metrics.items():
-                    logger.info(f"Best {metric.upper()}: {value:.4f}")
-            
-            return should_stop, self.best_metrics.copy() 
+        if should_stop and verbose:
+            logger.info(f"\nEarly stopping triggered after {self._early_stop_counter} epochs without improvement in {metric}")
+            logger.info(f"Best {metric.upper()}: {self.best_metrics[metric]:.4f}")
+        
+        return should_stop, self.best_metrics.copy()
 
     def calculate_metrics(self,pred: torch.Tensor, target: torch.Tensor, obs_last_pos: torch.Tensor) -> Tuple[float, float]:
         """
@@ -887,8 +898,6 @@ class AttentionGMM(nn.Module):
             ckpt_path: Path to checkpoint file
             from_train: Boolean indicating if called during training
         """
-        logger = logging.getLogger('AttentionGMM')
-    
         if test_loader is None:
             raise ValueError("test_loader cannot be None")
             
@@ -897,7 +906,11 @@ class AttentionGMM(nn.Module):
         
         try:
             if not from_train:
-                self.load_model(ckpt_path, device=self.device)(ckpt_path, self.device)                                                     
+                self.load_model(ckpt_path)
+                # Setup logger
+                logger = logging.getLogger('AttentionGMM')
+                if not logger.handlers:
+                    logger = self.setup_logger(save_path=self.log_save_path,eval=True)                                                      
                         
            
             # Set evaluation mode :  Need to use nn.Module's train method for mode setting
@@ -937,6 +950,7 @@ class AttentionGMM(nn.Module):
                     # highest_prob_pred and best of n prediction
                     highest_prob_pred, best_of_n_pred = self._sample_gmm_predictions(pi_eval, sigmas_eval, mus_eval,target_eval)
                     
+                    
                     # Calculate metrics
                     eval_loss = self._mdn_loss_fn(pi_eval, sigma_x_eval,sigma_y_eval, mu_x_eval , mu_y_eval,target_eval,self.num_gaussians)
                     eval_obs_last_pos = obs_tensor_eval[:, -1:, 0:2]
@@ -969,6 +983,34 @@ class AttentionGMM(nn.Module):
         finally:
             # Restore original training mode
             super().train(training)
+    def _run_cluster(self,mus, pi, threshold=0.05, pred_len=10):
+        data_weight = pi.detach().cpu().numpy()
+        
+        trajs, best_trajs, weights, best_weights = [], [], [], []
+
+        for batch, pis in zip(mus, data_weight):
+            root = TreeNode([0, 0], 0, 0)
+            
+            for level, (timestamp, pie) in enumerate(zip(batch, pis), start=1):
+                centroids = timestamp[pie > threshold]
+                pied = pie[pie > threshold].reshape(-1, 1)
+                
+                max_index = np.argmax(pied)
+                for i, centroid in enumerate(centroids):
+                    root.add_child(TreeNode(centroid, pied[i], i == max_index, level), level - 1)
+                    
+                if level == pred_len:
+                    pos_trajs, pos_weights = root.get_trajectories(pred_len)
+                    normalized_weights = np.round(pos_weights / np.sum(pos_weights), 1)
+                    
+                    trajs.append(pos_trajs)
+                    weights.append(normalized_weights)
+                    best_idx = np.argmax(normalized_weights)
+                    
+                    best_trajs.append(pos_trajs[best_idx])
+                    best_weights.append(normalized_weights[best_idx])
+        return np.array(trajs),np.array(weights), best_trajs, best_weights
+    
     def _generate_square_mask(
         self,
         dim_trg: int,
@@ -1007,7 +1049,7 @@ class AttentionGMM(nn.Module):
 
         return mask
     
-    def setup_logger(self,name: str = 'AttentionGMM', save_path: str = None, level=logging.INFO):
+    def setup_logger(self,name: str = 'AttentionGMM', save_path: str = None, level=logging.INFO,eval=False):
         """Set up logger configuration.
         
         Args:
@@ -1038,7 +1080,11 @@ class AttentionGMM(nn.Module):
         
         # File handler if save_path is provided
         if save_path:
-            log_path = Path(save_path) / f'training_metrics_model_{self.past_trajectory}_{self.future_trajectory}_training_{self.n_warmup_steps}_W_{self.config.win_size}.log'
+            if eval: 
+                log_path = Path(save_path) / f'transformerGMM_eval_metrics_model_{self.past_trajectory}_{self.future_trajectory}_W_{self.config.win_size}.log'
+            else:
+                 log_path = Path(save_path) / f'transformerGMM_training_metrics_model_{self.past_trajectory}_{self.future_trajectory}_training_{self.n_warmup_steps}_W_{self.config.win_size}_lr_mul_{self.lr_mul}.log'
+            
             log_path.parent.mkdir(parents=True, exist_ok=True)
             file_handler = logging.FileHandler(str(log_path),mode='w')
             file_handler.setFormatter(detailed_formatter)
@@ -1288,3 +1334,112 @@ class MetricTracker:
     def reset(self, phase='train'):
         """Reset running metrics for specified phase."""
         self.running_metrics[phase] = self._init_metric_dict()
+
+
+
+class TreeNode:
+    def __init__(self, value, weight, maximum,level=0):
+        self.value = value
+        self.weight = weight
+        self.children = []
+        self.level = level
+        self.is_max = maximum # means it is the max value
+        self.max_connected = False
+
+
+    def add_child(self, child, prev_level):
+        if self.level == prev_level:
+            self.children.append(child)
+            return
+
+        min_distance, closest_node = math.inf, None
+        not_connected = True
+        stack = [self]
+
+        while stack:
+            node = stack.pop()
+            if node.level == prev_level:
+                distance = math.dist(node.value, child.value)
+                if distance < min_distance:
+                    min_distance, closest_node = distance, node
+
+                if node.is_max and child.is_max:
+                    closest_node.children.append(child)
+                    not_connected = False
+                    closest_node.max_connected = True
+
+            elif node.children:
+                stack.extend(node.children)
+
+        if not_connected and closest_node:
+            closest_node.children.append(child)
+
+
+    # def add_child(self, child, prev_level):
+    #     if self.level == prev_level:
+    #         self.children.append(child)
+            
+    #     else:
+    #         min_distance = math.inf
+    #         closest_node = None
+    #         not_connected = True
+    #         stack = [self]
+    #         #print("For node : ",child.value," at level ",child.level)
+    #         while stack:
+    #             node = stack.pop()
+    #             if node.level==prev_level:
+    #                 # print("node at level ",node.level, " does not have children")
+    #                 distance = math.sqrt((node.value[0] - child.value[0]) ** 2 + (node.value[1] - child.value[1]) ** 2)
+    #                 if distance < min_distance:
+    #                     min_distance = distance
+    #                     closest_node = node
+    #                     #print("For node : ",child.value," at level ",child.level," Node: ",closest_node.value," at level ",closest_node.level)
+    #                 # Check if both are max
+    #                 if (node.is_max and child.is_max):
+    #                     closest_node.children.append(child)
+    #                     not_connected = False
+    #                     closest_node.max_connected = True
+
+    #             elif(node.children):
+    #                 # print("node at level ",node.level, "has children")
+    #                 for node_child in node.children:
+    #                     stack.append(node_child)
+                
+    #         if(not_connected):   # connect if its not max
+    #             closest_node.children.append(child)
+    #         # closest_node.children.append(child)
+
+    
+    def get_trajectories(self,depth = 12,full=True):
+        # branches = self.get_all_branches()
+        branches,weights = self.get_all_branches()
+        # full_branches = [branch for branch in branches if len(branch[0]) >= depth]
+        full_branches = [branch for branch in branches if len(branch) >= depth]
+        full_weights = [weights[i] for i in range(len(weights)) if len(branches[i]) >= depth]
+        return full_branches,full_weights
+           
+
+    def get_all_branches(self):
+        if not self.children:
+            # return [[[self.value.tolist()],self.weight]]
+            return [[self.value.tolist()]],self.weight
+        branches = []
+        weights = []
+        full_branches = []
+        full_weights = []
+
+        for child in self.children:
+                
+                brncs, wgts = child.get_all_branches()
+                for branch,weight in zip(brncs, wgts) :
+                    if self.level == 0:
+                        # branches.append([branch, weight])  
+                        branches.append(branch) 
+                        weights.append(weight) 
+                    else:
+                        branches.append([self.value.tolist()] + branch)
+                        weights.append(self.weight + weight)
+        return branches,weights  
+    
+
+
