@@ -246,7 +246,7 @@ class GATPredictor:
         self.in_size = (observation_length - 1) * 2
         self.out_size = 2
         self.nheads = 2
-        self.dropout = 0.1
+        self.dropout = 0
         self.alpha = 0.2
 
         encoder = GATEncoder(self.in_size, self.hidden_size, self.dropout, self.alpha, self.nheads, num_layers=self.num_layers)

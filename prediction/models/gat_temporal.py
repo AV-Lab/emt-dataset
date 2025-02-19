@@ -4,6 +4,7 @@ import torch.optim as optim
 from tqdm import tqdm
 
 from evaluation.distance_metrics import calculate_ade, calculate_fde
+from dataloaders.frame_loader import compute_adjacency_matrix 
 
 def masked_mse_loss(pred, target, mask):
     """
@@ -248,8 +249,8 @@ class GATLSTMPredictor:
         self.normalize = normalize
         self.max_nodes = max_nodes
 
-        self.num_epochs = 1
-        self.learning_rate = 1e-5
+        self.num_epochs = 50
+        self.learning_rate = 1e-3
         self.patience = 5
         self.best_val_loss = float('inf')
         self.epochs_without_improvement = 0
@@ -262,14 +263,15 @@ class GATLSTMPredictor:
         self.lstm_hidden = 128
         self.in_size = 2
         self.out_size = 2
+        self.dropout = 0
         self.lstm_encoder_input = self.gat_hidden * self.num_heads
 
-        gat_encoder = GATEncoder(self.in_size, self.gat_hidden, num_layers=self.num_gat_layers, num_heads=self.num_heads, dropout=0.1)
+        gat_encoder = GATEncoder(self.in_size, self.gat_hidden, num_layers=self.num_gat_layers, num_heads=self.num_heads, dropout=self.dropout)
         lstm_encoder = LSTMEncoder(input_size=self.lstm_encoder_input, hidden_size=self.lstm_hidden, num_layers=self.lstm_encode_num_layers)
         lstm_decoder = LSTMDecoder(hidden_size=self.lstm_hidden, out_size=self.out_size, num_layers=self.lstm_decode_num_layers)
         self.model = GATLSTMSeq2Seq(gat_encoder, lstm_encoder, lstm_decoder).to(self.device)
 
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=1e-7)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=1e-5)
         self.criterion = masked_mse_loss
 
         if checkpoint_file is not None:
@@ -533,7 +535,6 @@ class GATLSTMPredictor:
         vel_list = []
         curr_list = []
 
-        # Process each trajectory: compute velocity differences and pad/truncate as needed.
         for traj in obs_list:
             traj_tensor = torch.tensor(traj, dtype=torch.float32, device=self.device)
             if traj_tensor.ndim == 1:
@@ -543,7 +544,7 @@ class GATLSTMPredictor:
                 vel = traj_tensor[1:] - traj_tensor[:-1]
             else:
                 vel = torch.zeros((0, 2), dtype=torch.float32, device=self.device)
-            # Pad at the beginning if necessary, or truncate to the last (self.input_len - 1) steps.
+
             if vel.shape[0] < self.input_len - 1:
                 pad_size = self.input_len - 1 - vel.shape[0]
                 pad_vel = torch.zeros((pad_size, 2), dtype=torch.float32, device=self.device)
@@ -553,14 +554,10 @@ class GATLSTMPredictor:
             vel_list.append(vel)
             curr_list.append(traj_tensor[-1, :])
 
-        # Stack velocity tensors and current positions.
-        # vel_tensor shape: (B, self.input_len - 1, 2)
         vel_tensor = torch.stack(vel_list, dim=0)
-        # Permute to (self.input_len - 1, B, 2)
         vel_tensor = vel_tensor.permute(1, 0, 2)
-        curr_tensor = torch.stack(curr_list, dim=0)  # shape: (B, 2)
+        curr_tensor = torch.stack(curr_list, dim=0) 
 
-        # Pad nodes from B to self.max_nodes.
         pad_nodes = self.max_nodes - valid_nodes
         if pad_nodes > 0:
             pad_vel = torch.zeros((self.input_len - 1, pad_nodes, 2), dtype=torch.float32, device=self.device)
@@ -568,26 +565,22 @@ class GATLSTMPredictor:
             pad_curr = torch.zeros((pad_nodes, 2), dtype=torch.float32, device=self.device)
             curr_tensor = torch.cat([curr_tensor, pad_curr], dim=0)
 
-        # Add a batch dimension.
-        obs_vel = vel_tensor.unsqueeze(0)    # shape: (1, self.input_len - 1, self.max_nodes, 2)
-        curr_pos = curr_tensor.unsqueeze(0)    # shape: (1, self.max_nodes, 2)
-        mask = torch.cat([torch.ones(valid_nodes, device=self.device),
-                          torch.zeros(pad_nodes, device=self.device)], dim=0)
-        mask_tensor = mask.unsqueeze(0)  # shape: (1, self.max_nodes)
+        obs_vel = vel_tensor.unsqueeze(0) 
+        curr_pos = curr_tensor.unsqueeze(0)  
+        mask = torch.cat([torch.ones(valid_nodes, device=self.device),torch.zeros(pad_nodes, device=self.device)], dim=0)
+        mask_tensor = mask.unsqueeze(0)  
 
-        # Optionally normalize the observed velocities.
         if self.normalize and self.mean is not None and self.std is not None:
             B_v, T_v, N_v, C = obs_vel.shape
             obs_vel = obs_vel.view(B_v * T_v * N_v, C)
             obs_vel = (obs_vel - self.mean[2:]) / self.std[2:]
             obs_vel = obs_vel.view(B_v, T_v, N_v, C)
 
-        # Compute the adjacency matrix using the valid current positions.
-        from dataloaders.frame_loader import compute_adjacency_matrix  # ensure this function is imported
+        
         adj_valid = compute_adjacency_matrix(curr_pos[0][:valid_nodes].tolist(), threshold=200, normalize=True)
         adj = torch.zeros(self.max_nodes, self.max_nodes, device=self.device)
         adj[:valid_nodes, :valid_nodes] = adj_valid
-        adj = adj.unsqueeze(0)  # shape: (1, self.max_nodes, self.max_nodes)
+        adj = adj.unsqueeze(0)  
 
         with torch.no_grad():
             pred_vel_norm = self.model(obs_vel, adj, self.future_length)
@@ -599,17 +592,14 @@ class GATLSTMPredictor:
             else:
                 pred_vel = pred_vel_norm
 
-        # Reconstruct absolute positions by cumulatively summing predicted velocities,
-        # starting from the current positions.
         pred_positions = torch.zeros((self.future_length, self.max_nodes, 2), device=self.device)
         pred_positions[0] = curr_pos[0] + pred_vel[0, 0]
         for t in range(1, self.future_length):
             pred_positions[t] = pred_positions[t - 1] + pred_vel[0, t]
 
-        # Filter out padded nodes using the mask.
         valid_idx = (mask_tensor[0] == 1).nonzero(as_tuple=False).squeeze()
         if valid_idx.ndim == 0:
             valid_idx = valid_idx.unsqueeze(0)
-        final_pred = pred_positions[:, valid_idx, :]  # shape: (future_len, valid_nodes, 2)
-        final_pred = final_pred.permute(1, 0, 2)         # shape: (valid_nodes, future_len, 2)
+        final_pred = pred_positions[:, valid_idx, :] 
+        final_pred = final_pred.permute(1, 0, 2)         
         return final_pred.cpu().numpy()

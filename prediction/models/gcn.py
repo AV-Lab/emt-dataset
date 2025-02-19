@@ -224,7 +224,7 @@ class GCNPredictor:
         self.max_nodes = max_nodes
         self.best_val_loss = float('inf')
         self.epochs_without_improvement = 0
-        self.hidden_size = 128
+        self.hidden_size = 256
         self.num_layers = 2
 
         self.in_size = (observation_length - 1)* 2   

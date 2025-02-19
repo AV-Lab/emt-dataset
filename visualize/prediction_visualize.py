@@ -168,8 +168,8 @@ if __name__ == '__main__':
             exit()
         #predictor = RNNPredictor(args.past_trajectory, args.future_trajectory, args.device, checkpoint_file=args.checkpoint)
         #predictor = GCNLSTMPredictor(args.past_trajectory, args.future_trajectory, args.device, checkpoint_file=args.checkpoint)
-        predictor = GATLSTMPredictor(args.past_trajectory, args.future_trajectory, args.device, checkpoint_file=args.checkpoint)
+        #predictor = GATLSTMPredictor(args.past_trajectory, args.future_trajectory, args.device, checkpoint_file=args.checkpoint)
         #predictor = GCNPredictor(args.past_trajectory, args.future_trajectory, args.device, checkpoint_file=args.checkpoint)
-        #predictor = GATPredictor(args.past_trajectory, args.future_trajectory, args.device, checkpoint_file=args.checkpoint)
+        predictor = GATPredictor(args.past_trajectory, args.future_trajectory, args.device, checkpoint_file=args.checkpoint)
         plot_predictions(args.video_path, trajectories, predictor)
 
