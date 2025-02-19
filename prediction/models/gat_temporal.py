@@ -232,7 +232,7 @@ class GATLSTMPredictor:
     using the last observed positions (channels 0:2 of feats). Normalization (if enabled) is applied only on
     the velocity channels.
     """
-    def __init__(self, observation_length, future_length, max_nodes, device, normalize, checkpoint_file=None):
+    def __init__(self, observation_length, future_length, device, max_nodes=50, normalize=False, checkpoint_file=None):
         """
         Args:
           observation_length (int): Number of observed time steps (T_obs)
@@ -246,8 +246,9 @@ class GATLSTMPredictor:
         self.input_len = observation_length
         self.device = device
         self.normalize = normalize
+        self.max_nodes = max_nodes
 
-        self.num_epochs = 50
+        self.num_epochs = 1
         self.learning_rate = 1e-5
         self.patience = 5
         self.best_val_loss = float('inf')
@@ -276,8 +277,12 @@ class GATLSTMPredictor:
             ckpt = torch.load(checkpoint_file, map_location=self.device)
             self.model.load_state_dict(ckpt["model_state_dict"])
             self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-            self.mean = ckpt.get("mean", None)
-            self.std  = ckpt.get("std", None)
+            self.max_nodes = ckpt['max_nodes']
+            if 'mean' in ckpt:
+                self.mean = ckpt['mean']
+                self.std  = ckpt['std']
+                self.normalize = True
+                print("please note model was trained on normalized values => self.normalize is set to True")
 
     def save_checkpoint(self, folder):
         ckpt = {
@@ -287,8 +292,9 @@ class GATLSTMPredictor:
         if self.normalize:
             ckpt["mean"] = self.mean
             ckpt["std"] = self.std
-        torch.save(ckpt, f"{folder}/trained_gat_lstm_model.pth")
-        print(f"Checkpoint saved to {folder}/trained_gat_lstm_model.pth")
+        ckpt["max_nodes"] = self.max_nodes
+        torch.save(ckpt, f"{folder}/gat_lstm_trained_model.pth")
+        print(f"Checkpoint saved to {folder}/gat_lstm_trained_model.pth")
 
     def train(self, train_loader, valid_loader=None, saving_checkpoint_path=None):
         """
@@ -494,32 +500,116 @@ class GATLSTMPredictor:
         print(f"Test Loss (velocity MSE): {avg_test_loss:.4f}, ADE: {avg_ade:.4f}, FDE: {avg_fde:.4f}")
         return avg_test_loss, avg_ade, avg_fde
 
-    def predict(self, feats, adj, future_len, mask=None):
+    def predict(self, obs_list):
         """
-        Given raw features (B, T_obs, N, 4), use only the velocity channels (2:4)
-        to predict future velocities (B, future_len, N, 2). If normalization is enabled,
-        apply it (and then unnormalize).
+        Predict future absolute positions for a batch of samples using the GAT-LSTM predictor.
+        
+        Args:
+            obs_list: A list of samples (batch), where each sample is a list of observed positions [x, y].
+                      (Each sample corresponds to one agent's trajectory.)
+        
+        Process for each sample:
+          - Convert the observed trajectory to a tensor of shape (T, 2).
+          - Compute velocities as differences between consecutive positions.
+          - If the velocity sequence is shorter than (self.input_len - 1), pad with zeros at the beginning;
+            if longer, take the last (self.input_len - 1) velocity steps.
+          - Extract the last observed position as the current location.
+          - Stack the per-sample velocity tensors to obtain a tensor of shape (B, self.input_len - 1, 2),
+            then permute to (self.input_len - 1, B, 2).
+          - Pad the node dimension from B (number of valid nodes) to self.max_nodes.
+          - Add a batch dimension so that:
+                obs_vel: (1, self.input_len - 1, self.max_nodes, 2)
+                curr_pos: (1, self.max_nodes, 2)
+          - Create a mask of shape (1, self.max_nodes) with ones for valid nodes and zeros for padded nodes.
+          - Optionally normalize the velocity tensor.
+          - Compute the adjacency matrix using the valid current positions (first B nodes) and pad it to shape
+            (self.max_nodes, self.max_nodes), then expand to a batch dimension.
+          - Forward pass: the model (which expects input shape (1, T_obs, self.max_nodes, 2)) outputs predicted
+            future velocities of shape (1, future_len, self.max_nodes, 2).
+          - Reconstruct future absolute positions by cumulatively summing the predicted velocities, starting from curr_pos.
+          - Filter out padded nodes using the mask and return only the valid predictions as a NumPy array.
         """
-        self.model.eval()
-        feats = feats.to(self.device)
-        adj   = adj.to(self.device)
-        if mask is not None:
-            mask = mask.to(self.device)
-        if feats.dim() == 3:
-            feats = feats.unsqueeze(1)
+        valid_nodes = len(obs_list)
+        vel_list = []
+        curr_list = []
+
+        # Process each trajectory: compute velocity differences and pad/truncate as needed.
+        for traj in obs_list:
+            traj_tensor = torch.tensor(traj, dtype=torch.float32, device=self.device)
+            if traj_tensor.ndim == 1:
+                traj_tensor = traj_tensor.unsqueeze(0)
+            T = traj_tensor.shape[0]
+            if T > 1:
+                vel = traj_tensor[1:] - traj_tensor[:-1]
+            else:
+                vel = torch.zeros((0, 2), dtype=torch.float32, device=self.device)
+            # Pad at the beginning if necessary, or truncate to the last (self.input_len - 1) steps.
+            if vel.shape[0] < self.input_len - 1:
+                pad_size = self.input_len - 1 - vel.shape[0]
+                pad_vel = torch.zeros((pad_size, 2), dtype=torch.float32, device=self.device)
+                vel = torch.cat([pad_vel, vel], dim=0)
+            elif vel.shape[0] > self.input_len - 1:
+                vel = vel[-(self.input_len - 1):]
+            vel_list.append(vel)
+            curr_list.append(traj_tensor[-1, :])
+
+        # Stack velocity tensors and current positions.
+        # vel_tensor shape: (B, self.input_len - 1, 2)
+        vel_tensor = torch.stack(vel_list, dim=0)
+        # Permute to (self.input_len - 1, B, 2)
+        vel_tensor = vel_tensor.permute(1, 0, 2)
+        curr_tensor = torch.stack(curr_list, dim=0)  # shape: (B, 2)
+
+        # Pad nodes from B to self.max_nodes.
+        pad_nodes = self.max_nodes - valid_nodes
+        if pad_nodes > 0:
+            pad_vel = torch.zeros((self.input_len - 1, pad_nodes, 2), dtype=torch.float32, device=self.device)
+            vel_tensor = torch.cat([vel_tensor, pad_vel], dim=1)
+            pad_curr = torch.zeros((pad_nodes, 2), dtype=torch.float32, device=self.device)
+            curr_tensor = torch.cat([curr_tensor, pad_curr], dim=0)
+
+        # Add a batch dimension.
+        obs_vel = vel_tensor.unsqueeze(0)    # shape: (1, self.input_len - 1, self.max_nodes, 2)
+        curr_pos = curr_tensor.unsqueeze(0)    # shape: (1, self.max_nodes, 2)
+        mask = torch.cat([torch.ones(valid_nodes, device=self.device),
+                          torch.zeros(pad_nodes, device=self.device)], dim=0)
+        mask_tensor = mask.unsqueeze(0)  # shape: (1, self.max_nodes)
+
+        # Optionally normalize the observed velocities.
+        if self.normalize and self.mean is not None and self.std is not None:
+            B_v, T_v, N_v, C = obs_vel.shape
+            obs_vel = obs_vel.view(B_v * T_v * N_v, C)
+            obs_vel = (obs_vel - self.mean[2:]) / self.std[2:]
+            obs_vel = obs_vel.view(B_v, T_v, N_v, C)
+
+        # Compute the adjacency matrix using the valid current positions.
+        from dataloaders.frame_loader import compute_adjacency_matrix  # ensure this function is imported
+        adj_valid = compute_adjacency_matrix(curr_pos[0][:valid_nodes].tolist(), threshold=200, normalize=True)
+        adj = torch.zeros(self.max_nodes, self.max_nodes, device=self.device)
+        adj[:valid_nodes, :valid_nodes] = adj_valid
+        adj = adj.unsqueeze(0)  # shape: (1, self.max_nodes, self.max_nodes)
+
         with torch.no_grad():
-            feats_vel = feats[..., 2:4]
+            pred_vel_norm = self.model(obs_vel, adj, self.future_length)
             if self.normalize and self.mean is not None and self.std is not None:
-                B, T_obs, N, C = feats_vel.shape
-                f2d = feats_vel.view(B * T_obs * N, C)
-                f2d = (f2d - self.mean[2:]) / self.std[2:]
-                feats_vel = f2d.view(B, T_obs, N, C)
-            pred_vel_norm = self.model(feats_vel, adj, future_len)
-            if self.normalize and self.mean is not None and self.std is not None:
-                B2, T2, N2, C2 = pred_vel_norm.shape
-                p2d = pred_vel_norm.view(B2 * T2 * N2, C2)
-                p2d = p2d * self.std[2:] + self.mean[2:]
-                pred_vel = p2d.view(B2, T2, N2, C2)
+                B_p, T_pred, N_p, C_p = pred_vel_norm.shape
+                pred_vel_norm = pred_vel_norm.view(B_p * T_pred * N_p, C_p)
+                pred_vel_norm = pred_vel_norm * self.std[2:] + self.mean[2:]
+                pred_vel = pred_vel_norm.view(B_p, T_pred, N_p, C_p)
             else:
                 pred_vel = pred_vel_norm
-        return pred_vel
+
+        # Reconstruct absolute positions by cumulatively summing predicted velocities,
+        # starting from the current positions.
+        pred_positions = torch.zeros((self.future_length, self.max_nodes, 2), device=self.device)
+        pred_positions[0] = curr_pos[0] + pred_vel[0, 0]
+        for t in range(1, self.future_length):
+            pred_positions[t] = pred_positions[t - 1] + pred_vel[0, t]
+
+        # Filter out padded nodes using the mask.
+        valid_idx = (mask_tensor[0] == 1).nonzero(as_tuple=False).squeeze()
+        if valid_idx.ndim == 0:
+            valid_idx = valid_idx.unsqueeze(0)
+        final_pred = pred_positions[:, valid_idx, :]  # shape: (future_len, valid_nodes, 2)
+        final_pred = final_pred.permute(1, 0, 2)         # shape: (valid_nodes, future_len, 2)
+        return final_pred.cpu().numpy()

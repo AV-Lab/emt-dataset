@@ -53,9 +53,9 @@ class RNNAutoregressivePredictor:
                 lstm_out, (hidden, cell) = self.lstm(embedded_input, (hidden, cell))
                 step_logits = self.fc(lstm_out)
                 outputs.append(step_logits)
-                preds = step_logits.argmax(dim=2)  # (batch_size, 1)                
+                preds = step_logits.argmax(dim=2)           
                 if (target_seq is not None) and (random.random() < teacher_forcing_ratio):
-                    next_input = target_seq[:, t].unsqueeze(1)  # shape => (batch_size, 1)
+                    next_input = target_seq[:, t].unsqueeze(1)  
                 else:
                     next_input = preds                    
                 decoder_input = next_input
@@ -96,9 +96,11 @@ class RNNAutoregressivePredictor:
             checkpoint = torch.load(checkpoint_file, map_location=self.device)
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            if self.normalize:
+            if "mean" in checkpoint:
                 self.mean = checkpoint["mean"]
                 self.std  = checkpoint["std"]
+                self.normalize = True
+                print("please note model was trained on normalized values => self.normalize is set to True")
 
     def train(self, train_loader):
         self.model.train()
@@ -234,6 +236,6 @@ class RNNAutoregressivePredictor:
         
         preds = [[LABEL_TO_CLASS[p.item()] for p in pred] for pred in preds]
     
-        return preds  # Shape: (num_objects, decode_len)
+        return preds 
 
 

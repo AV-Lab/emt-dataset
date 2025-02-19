@@ -42,9 +42,9 @@ class RNNVanillaPredictor:
             outputs = []
             for _ in range(target_len):
                 dec_out, (hidden, cell) = self.lstm(decoder_input, (hidden, cell))
-                logits = self.fc(dec_out)  # => (batch_size,1,output_size)
+                logits = self.fc(dec_out) 
                 outputs.append(logits)
-            return torch.cat(outputs, dim=1)  # => (batch_size, target_len, output_size)
+            return torch.cat(outputs, dim=1) 
 
     class Seq2Seq(nn.Module):
         def __init__(self, encoder, decoder, target_len):
@@ -90,9 +90,11 @@ class RNNVanillaPredictor:
             cpt = torch.load(checkpoint_file, map_location=self.device)
             self.model.load_state_dict(cpt["model_state_dict"])
             self.optimizer.load_state_dict(cpt["optimizer_state_dict"])
-            if self.normalize:
+            if "mean" in cpt:
                 self.mean = cpt["mean"]
                 self.std  = cpt["std"]
+                self.normalize = True
+                print("please note model was trained on normalized values => self.normalize is set to True")
 
 
     def train(self, train_loader, valid_loader=None):
@@ -112,8 +114,8 @@ class RNNVanillaPredictor:
     
             for id_b, batch in enumerate(load_train):
                 obs_tensor, targets = batch
-                obs_tensor = obs_tensor.to(self.device)  # shape [B, obs_seq_len, 4]
-                targets = targets.to(self.device)  # shape [B, pred_seq_len, 4]
+                obs_tensor = obs_tensor.to(self.device)  
+                targets = targets.to(self.device)  
                 
                 if self.normalize:
                     input_vel = obs_tensor[:, 1:, 2:4]  # skip first frame’s velocity
@@ -123,7 +125,7 @@ class RNNVanillaPredictor:
 
                 self.optimizer.zero_grad()
 
-                outputs = self.model(input_vel_norm)  # shape (batch_size, target_len, num_classes)
+                outputs = self.model(input_vel_norm) 
 
                 loss = self.criterion(outputs.view(-1, self.num_classes), targets.argmax(dim=-1).view(-1))
 
@@ -162,13 +164,13 @@ class RNNVanillaPredictor:
                 else:
                     input_vel_norm = obs_tensor[:, 1:, 2:4]
 
-                outputs = self.model(input_vel_norm)  # (batch_size, target_len, num_classes)
+                outputs = self.model(input_vel_norm)  
                 loss = self.criterion(outputs.view(-1, self.num_classes), targets.argmax(dim=-1).view(-1))
                 total_loss += loss.item()
 
                 preds = outputs.argmax(dim=2)  # Convert logits to predicted class indices
                 correct += (preds == targets.argmax(dim=2)).sum().item()
-                total_samples += targets.numel() // self.num_classes  # Adjust for multiple timesteps
+                total_samples += targets.numel() // self.num_classes  
                 
                 all_preds.append(preds)
                 all_targets.append(targets)

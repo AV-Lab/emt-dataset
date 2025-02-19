@@ -53,15 +53,15 @@ def create_predictor(past_trajectory, future_trajectory, max_nodes, predictor, d
         Model instance of the specified predictor type.
     """
     if predictor == "gcn":
-        return GCNPredictor(past_trajectory, future_trajectory, max_nodes, device, normalize, checkpoint_file)
+        return GCNPredictor(past_trajectory, future_trajectory, device, max_nodes, normalize, checkpoint_file)
     elif predictor == "gcn_lstm":
-        return GCNLSTMPredictor(past_trajectory, future_trajectory, max_nodes, device, normalize, checkpoint_file)
+        return GCNLSTMPredictor(past_trajectory, future_trajectory, device, max_nodes, normalize, checkpoint_file)
     elif predictor == "gat":
-        return GATPredictor(past_trajectory, future_trajectory, max_nodes, device, normalize, checkpoint_file) 
+        return GATPredictor(past_trajectory, future_trajectory, device, max_nodes, normalize, checkpoint_file) 
     elif predictor == "gat_lstm":
-        return GATLSTMPredictor(past_trajectory, future_trajectory, max_nodes, device, normalize, checkpoint_file) 
+        return GATLSTMPredictor(past_trajectory, future_trajectory, device, max_nodes, normalize, checkpoint_file) 
     elif predictor == 'transformer':
-        return AttentionEMT(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
+        return AttentionEMT(past_trajectory, future_trajectory, device, normalize,  checkpoint_file)
     elif predictor == 'transformer-gmm':
         return AttentionGMM(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
     else:
@@ -98,9 +98,9 @@ if __name__ == '__main__':
     p.add_argument('--checkpoint', type=str, default=None, help='Path to model checkpoint file, required if mode is evaluate')
     p.add_argument('--annotations_path', type=str, help='If annotations are placed in a location different from recommended')
     p.add_argument('--num_workers', type=int, default=8, help='Number of workers for dataloader')
-    p.add_argument('--normalize', default=True, type=bool, help='Normalize data, recommended True')
+    p.add_argument('--normalize', default=False, type=bool, help='Normalize data, recommended True')
     p.add_argument('--batch_size', type=int, default=32, help='Batch size')
-    p.add_argument('--device', type=str, default='cuda:0', help='Device to run the model',choices=['cuda', 'cpu'])
+    p.add_argument('--device', type=str, default='cuda:1', help='Device to run the model',choices=['cuda', 'cpu'])
     p.add_argument('--seed', type=int, default=42, help='Seed for reproducibility -> set zero for random seed generation')
 
     args = p.parse_args()
@@ -133,5 +133,5 @@ if __name__ == '__main__':
                                  args.device,
                                  args.normalize,
                                  args.checkpoint)
-    predictor.train(train_loader) 
+    predictor.train(train_loader, saving_checkpoint_path="checkpoints") 
     predictor.evaluate(test_loader)
