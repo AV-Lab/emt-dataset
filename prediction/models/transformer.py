@@ -34,6 +34,7 @@ class ModelConfig:
     device: Optional[torch.device] = None
     normalize: bool = True
     checkpoint_file: Optional[str] = None  # Allow user-defined checkpoint
+    win_size: int = 1
     mean: torch.tensor = torch.tensor([0.0, 0.0, 0.0, 0.0])
     std: torch.tensor = torch.tensor([1.0, 1.0, 1.0, 1.0])
     in_features: int = 2
@@ -45,12 +46,12 @@ class ModelConfig:
     dropout: float = 0.2
     batch_first: bool = True
     actn: str = "gelu"
-    win_size: int = 1
+    
     
 
     # Optimizer parameters
     lr_mul: float = 0.2
-    n_warmup_steps: int = 4000 #2000 #3000 #3500
+    n_warmup_steps: int = 3500 #2000 #3000 #3500
     optimizer_betas: Tuple[float, float] = (0.9, 0.98)
     optimizer_eps: float = 1e-9
 
@@ -89,7 +90,13 @@ class ModelConfig:
             logger.info("\n" + "="*50)
             logger.info("AttentionEMT Model Configuration")
             logger.info("="*50)
-            
+
+            logger.info(f"Dataset info:")
+            logger.info("-"*20)
+            logger.info(f"sliding window: {self.win_size}")
+            logger.info(f"past trajectory:   {self.past_trajectory}")
+            logger.info(f"future trajectory: {self.future_trajectory}")
+
             logger.info("\nModel Architecture:")
             logger.info("-"*20)
             logger.info(f"Input Features:      {self.in_features}")
@@ -102,8 +109,6 @@ class ModelConfig:
             logger.info(f"Batch First:         {self.batch_first}")
             logger.info(f"Activation Function: {self.actn}")
             
-            logger.info("\nGMM Settings:")
-            logger.info("-"*20)
             
             logger.info("\nOptimizer Settings:")
             logger.info("-"*20)
@@ -504,7 +509,7 @@ class AttentionEMT(nn.Module):
         self,
         train_dl: DataLoader,
         test_dl: DataLoader = None,
-        epochs: int = 85,
+        epochs: int = 80,
         verbose: bool = True,
         save_path: str = 'results',
         save_model: bool = True,
@@ -582,7 +587,7 @@ class AttentionEMT(nn.Module):
                 
                 # Backward pass
                 train_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=10.0)
+                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
                 optimizer.step_and_update_lr()
 
                 # Calculate metrics
@@ -612,7 +617,7 @@ class AttentionEMT(nn.Module):
             self.tracker.compute_epoch_metrics(phase='train')
             
             # Test evaluation
-            if test_dl is not None and (epoch+1)%5 ==0:
+            if test_dl is not None and (epoch+1)%80 ==0:
                 self.evaluate(test_dl,from_train=True)
 
             # Print epoch metrics
