@@ -14,6 +14,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
 from evaluation.distance_metrics import calculate_ade, calculate_fde
+from dataloaders.frame_loader import compute_adjacency_matrix
+
 
 
 def masked_mse_loss(pred, target, mask):
@@ -80,7 +82,7 @@ class GraphAttentionLayer(nn.Module):
         a_input = torch.cat([Wh_i, Wh_j], dim=-1)   
 
         # Compute attention coefficients
-        e = self.leakyrelu(torch.matmul(a_input, self.a).squeeze(-1))  # (B, N, N)
+        e = self.leakyrelu(torch.matmul(a_input, self.a).squeeze(-1))  
         zero_vec = -9e15 * torch.ones_like(e)
         attention = torch.where(adj > 0, e, zero_vec)
 
@@ -115,10 +117,8 @@ class MultiHeadGATLayer(nn.Module):
 
     def forward(self, x, adj):
         if self.concat:
-            # Concatenate head outputs along feature dimension
             return torch.cat([head(x, adj) for head in self.heads], dim=-1)
         else:
-            # Average head outputs (keeps the same dimension)
             return torch.mean(torch.stack([head(x, adj) for head in self.heads]), dim=0)
 
 
@@ -226,10 +226,12 @@ class GATPredictor:
 
     The model predicts future velocities using only [vx, vy]. During evaluation (ADE/FDE),
     these predicted velocities are integrated into positions using the last observed positions.
+    This version uses a flattened past trajectory (i.e. all observed velocity differences)
+    for training.
     """
-    def __init__(self, observation_length, future_length, max_nodes, device, normalize, checkpoint_file=None):
+    def __init__(self, observation_length, future_length, device, max_nodes=50, normalize=False, checkpoint_file=None):
         self.future_length = future_length
-        self.input_len = observation_length
+        self.input_len = observation_length  # T_obs (number of observed positions)
         self.device = device
         self.normalize = normalize
         self.num_epochs = 50
@@ -239,10 +241,12 @@ class GATPredictor:
         self.epochs_without_improvement = 0
         self.hidden_size = 256
         self.num_layers = 2
-        self.in_size = 2   # using velocity channels [vx, vy]
+        self.max_nodes = max_nodes
+
+        self.in_size = (observation_length - 1) * 2
         self.out_size = 2
-        self.nheads = 4
-        self.dropout = 0.2
+        self.nheads = 2
+        self.dropout = 0
         self.alpha = 0.2
 
         encoder = GATEncoder(self.in_size, self.hidden_size, self.dropout, self.alpha, self.nheads, num_layers=self.num_layers)
@@ -256,11 +260,12 @@ class GATPredictor:
             ckpt = torch.load(checkpoint_file, map_location=self.device)
             self.model.load_state_dict(ckpt["model_state_dict"])
             self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-            self.mean = ckpt.get("mean", None)
-            self.std = ckpt.get("std", None)
-        else:
-            self.mean = None
-            self.std = None
+            self.max_nodes = ckpt['max_nodes']
+            if 'mean' in ckpt:
+                self.mean = ckpt['mean']
+                self.std  = ckpt['std']
+                self.normalize = True
+                print("Model was trained on normalized values. Setting self.normalize to True.")
 
     def save_checkpoint(self, folder):
         """
@@ -273,12 +278,13 @@ class GATPredictor:
         if self.normalize:
             ckpt["mean"] = self.mean
             ckpt["std"] = self.std
-        torch.save(ckpt, f"{folder}/trained_gat_model_no_lstm.pth")
-        print(f"Checkpoint saved to {folder}/trained_gat_model_no_lstm.pth")
+        ckpt["max_nodes"] = self.max_nodes
+        torch.save(ckpt, f"{folder}/gat_trained_model.pth")
+        print(f"Checkpoint saved to {folder}/gat_lstm_trained_model.pth")
 
     def train(self, train_loader, valid_loader=None, saving_checkpoint_path=None):
         """
-        Train the GAT predictor.
+        Train the GAT predictor using the flattened past trajectory.
         """
         if self.normalize:
             self.mean = train_loader.dataset.mean.to(self.device)
@@ -297,10 +303,9 @@ class GATPredictor:
                 adj = adj.to(self.device)
                 targets = targets.to(self.device)
                 mask = mask.to(self.device)
-
-                # Use velocity channels [vx, vy]
-                feats_vel = feats[..., 2:4]
-                targets_vel = targets[..., 2:4]
+                
+                feats_vel = feats[..., 2:4]    
+                targets_vel = targets[..., 2:4] 
                 self.optimizer.zero_grad()
 
                 if self.normalize and (self.mean is not None) and (self.std is not None):
@@ -314,8 +319,11 @@ class GATPredictor:
                     tgt_2d = (tgt_2d - self.mean[2:]) / self.std[2:]
                     targets_vel = tgt_2d.view(B2, T2, N2, C2)
 
-                feats_vel_last = feats_vel[:, -1, :, :]
-                pred_vel = self.model(feats_vel_last, adj, targets_vel.shape[1])
+                B, T_obs, N, C = feats_vel.shape
+                flattened_dim = T_obs * C
+                feats_vel_flat = feats_vel.permute(0, 2, 1, 3).reshape(B, N, flattened_dim)
+
+                pred_vel = self.model(feats_vel_flat, adj, targets_vel.shape[1])
                 loss = self.criterion(pred_vel, targets_vel, mask)
                 loss.backward()
                 self.optimizer.step()
@@ -334,24 +342,19 @@ class GATPredictor:
                         pred_positions[:, t, :, :] = pred_positions[:, t-1, :, :] + pred_vel_un[:, t, :, :]
                     target_positions = targets[..., 0:2]
 
-                    if mask is not None:
-                        predictions_list = []
-                        targets_list = []
-                        for b in range(B):
-                            valid_idx = (mask[b] == 1).nonzero(as_tuple=False).squeeze()
-                            if valid_idx.numel() == 0:
-                                continue
-                            predictions_list.append(pred_positions[b, :, valid_idx, :])
-                            targets_list.append(target_positions[b, :, valid_idx, :])
-                        if predictions_list:
-                            ade_batch = calculate_ade(predictions_list, targets_list)
-                            fde_batch = calculate_fde(predictions_list, targets_list)
-                        else:
-                            ade_batch = 0.0
-                            fde_batch = 0.0
+                    predictions_list = []
+                    targets_list = []
+                    for b in range(B):
+                        valid_idx = (mask[b] == 1).nonzero(as_tuple=False).squeeze()
+                        if valid_idx.numel() == 0:
+                            continue
+                        predictions_list.append(pred_positions[b, :, valid_idx, :])
+                        targets_list.append(target_positions[b, :, valid_idx, :])
+                    if len(predictions_list) > 0:
+                        ade_batch = calculate_ade(predictions_list, targets_list)
+                        fde_batch = calculate_fde(predictions_list, targets_list)
                     else:
-                        ade_batch = calculate_ade(pred_positions, target_positions)
-                        fde_batch = calculate_fde(pred_positions, target_positions)
+                        ade_batch, fde_batch = 0.0, 0.0
                     epoch_ade += ade_batch if isinstance(ade_batch, float) else ade_batch.item()
                     epoch_fde += fde_batch if isinstance(fde_batch, float) else fde_batch.item()
 
@@ -385,13 +388,12 @@ class GATPredictor:
 
     def validate(self, valid_loader):
         """
-        Validate the model on a validation dataset.
+        Validate the model on a validation dataset using flattened past trajectory.
         """
         self.model.eval()
         total_loss = 0.0
         with torch.no_grad():
-            for batch in valid_loader:
-                feats, adj, targets, mask = batch
+            for feats, adj, targets, mask in valid_loader:
                 feats = feats.to(self.device)
                 adj = adj.to(self.device)
                 targets = targets.to(self.device)
@@ -411,8 +413,11 @@ class GATPredictor:
                     t2d = (t2d - self.mean[2:]) / self.std[2:]
                     targets_vel = t2d.view(B2, T2, N2, C2)
 
-                feats_vel_last = feats_vel[:, -1, :, :]
-                pred_vel = self.model(feats_vel_last, adj, targets_vel.shape[1])
+                B, T_obs, N, C = feats_vel.shape
+                flattened_dim = T_obs * C
+                feats_vel_flat = feats_vel.permute(0, 2, 1, 3).reshape(B, N, flattened_dim)
+
+                pred_vel = self.model(feats_vel_flat, adj, targets_vel.shape[1])
                 loss = self.criterion(pred_vel, targets_vel, mask)
                 total_loss += loss.item()
         avg_val_loss = total_loss / len(valid_loader)
@@ -421,7 +426,7 @@ class GATPredictor:
 
     def evaluate(self, test_loader):
         """
-        Evaluate the model on a test dataset.
+        Evaluate the model on a test dataset using flattened past trajectory.
         """
         self.model.eval()
         total_loss = 0.0
@@ -449,8 +454,11 @@ class GATPredictor:
                     t2d = (t2d - self.mean[2:]) / self.std[2:]
                     targets_vel = t2d.view(B2, T2, N2, C2)
 
-                feats_vel_last = feats_vel[:, -1, :, :]
-                pred_vel = self.model(feats_vel_last, adj, targets_vel.shape[1])
+                B, T_obs, N, C = feats_vel.shape
+                flattened_dim = T_obs * C
+                feats_vel_flat = feats_vel.permute(0, 2, 1, 3).reshape(B, N, flattened_dim)
+
+                pred_vel = self.model(feats_vel_flat, adj, targets_vel.shape[1])
                 loss = self.criterion(pred_vel, targets_vel, mask)
                 total_loss += loss.item()
 
@@ -464,58 +472,127 @@ class GATPredictor:
                     pred_positions[:, t, :, :] = pred_positions[:, t-1, :, :] + pred_vel[:, t, :, :]
                 target_positions = targets[..., 0:2]
 
-                if mask is not None:
-                    predictions_list = []
-                    targets_list = []
-                    for b in range(B):
-                        valid_idx = (mask[b] == 1).nonzero(as_tuple=False).squeeze()
-                        if valid_idx.numel() == 0:
-                            continue
-                        predictions_list.append(pred_positions[b, :, valid_idx, :])
-                        targets_list.append(target_positions[b, :, valid_idx, :])
-                    if predictions_list:
-                        ade_batch = calculate_ade(predictions_list, targets_list)
-                        fde_batch = calculate_fde(predictions_list, targets_list)
-                    else:
-                        ade_batch = 0.0
-                        fde_batch = 0.0
+                predictions_list = []
+                targets_list = []
+                
+                for b in range(B):
+                    valid_idx = (mask[b] == 1).nonzero(as_tuple=False).squeeze()
+                    if valid_idx.numel() == 0:
+                        continue
+                    predictions_list.append(pred_positions[b, :, valid_idx, :])
+                    targets_list.append(target_positions[b, :, valid_idx, :])
+                if len(predictions_list) > 0:
+                    ade_batch = calculate_ade(predictions_list, targets_list)
+                    fde_batch = calculate_fde(predictions_list, targets_list)
                 else:
-                    ade_batch = calculate_ade(pred_positions, target_positions)
-                    fde_batch = calculate_fde(pred_positions, target_positions)
-
-                total_ade += ade_batch
-                total_fde += fde_batch
+                    ade_batch, fde_batch = 0.0, 0.0
+                total_ade += ade_batch if isinstance(ade_batch, float) else ade_batch.item()
+                total_fde += fde_batch if isinstance(fde_batch, float) else fde_batch.item()
+                
         avg_test_loss = total_loss / num_batches
         avg_ade = total_ade / num_batches
         avg_fde = total_fde / num_batches
         print(f"Test Loss (velocity MSE): {avg_test_loss:.4f}, ADE: {avg_ade:.4f}, FDE: {avg_fde:.4f}")
         return avg_test_loss, avg_ade, avg_fde
 
-    def predict(self, feats, adj, future_len, mask=None):
+    def predict(self, obs_list):
         """
-        Predict future velocities given observed features.
+        Predict future absolute positions for a batch of samples using the GAT predictor with
+        a flattened past trajectory. The procedure is as follows:
+
+          - For each sample (agent trajectory):
+              * Convert the observed trajectory (list of [x, y]) into a tensor.
+              * Compute velocity differences (i.e. traj[1:] - traj[:-1]).
+              * Pad (or truncate) the velocity sequence to have length (self.input_len - 1).
+              * Extract the last observed position (current position).
+          - Stack these to form:
+                * A velocity tensor of shape (B, self.input_len - 1, 2)
+                * A current position tensor of shape (B, 2)
+          - Pad the node dimension to self.max_nodes.
+          - Add a batch dimension so that:
+                obs_vel:  (1, self.max_nodes, self.input_len - 1, 2)
+                curr_pos: (1, self.max_nodes, 2)
+          - Create a mask indicating valid nodes.
+          - (Optionally) Normalize the velocity tensor.
+          - Flatten the time dimension for each node to obtain features of shape (1, self.max_nodes, (self.input_len - 1)*2).
+          - Compute the adjacency matrix using the valid current positions, then pad it.
+          - Forward pass through the model to predict future velocities.
+          - Reconstruct future positions by cumulatively summing velocities starting from curr_pos.
+          - Filter out padded nodes and return the predictions as a NumPy array.
         """
-        self.model.eval()
-        feats = feats.to(self.device)
-        adj = adj.to(self.device)
-        if mask is not None:
-            mask = mask.to(self.device)
-        if feats.dim() == 3:
-            feats = feats.unsqueeze(1)
+        B = len(obs_list)
+        vel_list = []
+        curr_list = []
+
+        for traj in obs_list:
+            traj_tensor = torch.tensor(traj, dtype=torch.float32, device=self.device)
+            if traj_tensor.ndim == 1:
+                traj_tensor = traj_tensor.unsqueeze(0)
+            T = traj_tensor.shape[0]
+            if T > 1:
+                vel = traj_tensor[1:] - traj_tensor[:-1]
+            else:
+                vel = torch.zeros((0, 2), dtype=torch.float32, device=self.device)
+    
+            if vel.shape[0] < self.input_len - 1:
+                pad_size = self.input_len - 1 - vel.shape[0]
+                pad_vel = torch.zeros((pad_size, 2), dtype=torch.float32, device=self.device)
+                vel = torch.cat([pad_vel, vel], dim=0)
+            elif vel.shape[0] > self.input_len - 1:
+                vel = vel[-(self.input_len - 1):]
+            vel_list.append(vel)
+            curr_list.append(traj_tensor[-1, :])
+
+        vel_tensor = torch.stack(vel_list, dim=0)  
+        curr_tensor = torch.stack(curr_list, dim=0)   
+
+        if B < self.max_nodes:
+            pad_size = self.max_nodes - B
+            pad_vel = torch.zeros((pad_size, self.input_len - 1, 2), dtype=torch.float32, device=self.device)
+            vel_tensor = torch.cat([vel_tensor, pad_vel], dim=0)
+            pad_curr = torch.zeros((pad_size, 2), dtype=torch.float32, device=self.device)
+            curr_tensor = torch.cat([curr_tensor, pad_curr], dim=0)
+
+        obs_vel = vel_tensor.unsqueeze(0)  
+        curr_pos = curr_tensor.unsqueeze(0)   
+        mask = torch.cat([torch.ones(B, device=self.device), torch.zeros(self.max_nodes - B, device=self.device)], dim=0)
+        mask_tensor = mask.unsqueeze(0)
+
+        if self.normalize and self.mean is not None and self.std is not None:
+            B_v, N_v, T_v, C = obs_vel.shape
+            obs_vel = obs_vel.view(B_v * T_v * N_v, C)
+            obs_vel = (obs_vel - self.mean[2:]) / self.std[2:]
+            obs_vel = obs_vel.view(B_v, N_v, T_v, C)
+
+        B_v, N_v, T_v, C = obs_vel.shape
+        in_features = T_v * C
+        feats_flat = obs_vel.reshape(B_v, N_v, in_features)
+
+        adj_valid = compute_adjacency_matrix(curr_pos[0][:B].tolist(), threshold=100, normalize=True)
+        adj = torch.zeros(self.max_nodes, self.max_nodes, device=self.device)
+        adj[:B, :B] = adj_valid
+        adj = adj.unsqueeze(0)
+
         with torch.no_grad():
-            feats_vel = feats[..., 2:4]
+            pred_vel_norm = self.model(feats_flat, adj, self.future_length)
             if self.normalize and self.mean is not None and self.std is not None:
-                B, T_obs, N, C = feats_vel.shape
-                feats_2d = feats_vel.view(B * T_obs * N, C)
-                feats_2d = (feats_2d - self.mean[2:]) / self.std[2:]
-                feats_vel = feats_2d.view(B, T_obs, N, C)
-            feats_vel_last = feats_vel[:, -1, :, :]
-            pred_vel_norm = self.model(feats_vel_last, adj, future_len)
-            if self.normalize and self.mean is not None and self.std is not None:
-                B2, T2, N2, C2 = pred_vel_norm.shape
-                p2d = pred_vel_norm.view(B2 * T2 * N2, C2)
-                p2d = p2d * self.std[2:] + self.mean[2:]
-                pred_vel = p2d.view(B2, T2, N2, C2)
+                B_p, T_pred, N_p, C_p = pred_vel_norm.shape
+                pred_vel_norm = pred_vel_norm.view(B_p * T_pred * N_p, C_p)
+                pred_vel_norm = pred_vel_norm * self.std[2:] + self.mean[2:]
+                pred_vel = pred_vel_norm.view(B_p, T_pred, N_p, C_p)
             else:
                 pred_vel = pred_vel_norm
-        return pred_vel
+
+        pred_positions = torch.zeros((self.future_length, self.max_nodes, 2), device=self.device)
+        pred_positions[0] = curr_pos[0] + pred_vel[0, 0]
+        for t in range(1, self.future_length):
+            pred_positions[t] = pred_positions[t - 1] + pred_vel[0, t]
+
+
+        valid_idx = (mask_tensor[0] == 1).nonzero(as_tuple=False).squeeze()
+        if valid_idx.ndim == 0:
+            valid_idx = valid_idx.unsqueeze(0)
+
+        final_pred = pred_positions[:, valid_idx, :] 
+        final_pred = final_pred.permute(1, 0, 2)         
+        return final_pred.cpu().numpy()

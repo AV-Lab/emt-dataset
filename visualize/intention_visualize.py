@@ -182,7 +182,6 @@ if __name__ == '__main__':
                    help="Choose between visualizing ground truth intentions or predicted intentions.")
     p.add_argument('--checkpoint', type=str, default=None, help='Path to the trained model checkpoint.')
     p.add_argument('--device', type=str, default='cuda:1', choices=['cuda', 'cpu'], help='Device to run the model.')
-    p.add_argument('--normalize', default=False, type=bool, help='Apply normalization to input data.')
     args = p.parse_args()
     
     intentions = group_annotations_by_frame(args.past_trajectory, args.future_trajectory, args.annotations_file, intention=True)
@@ -192,9 +191,6 @@ if __name__ == '__main__':
         if args.checkpoint is None:
             print("To run evaluation, please provide a checkpoint file.")
             exit()
-        predictor = RNNVanillaPredictor(args.past_trajectory, 
-                                               args.future_trajectory, 
-                                               args.device, 
-                                               args.normalize, 
-                                               args.checkpoint) 
+        # change to autoregressive if needed
+        predictor = RNNVanillaPredictor(args.past_trajectory, args.future_trajectory, args.device, checkpoint_file=args.checkpoint) 
         plot_predicted_intentions(args.video_path, intentions, predictor)

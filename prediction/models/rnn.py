@@ -10,6 +10,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from evaluation.distance_metrics import calculate_ade, calculate_fde
 
 
@@ -71,7 +75,7 @@ class RNNPredictor:
                 cell   (Tensor): updated cell states.
             """
             outputs, (hidden, cell) = self.lstm(x, (hidden, cell))
-            predictions = self.fc(outputs)  # shape: (batch_size, 1, output_size)
+            predictions = self.fc(outputs)  
             return predictions, hidden, cell
     
     class Seq2Seq(nn.Module):    
@@ -108,11 +112,10 @@ class RNNPredictor:
                 outputs.append(out_step)
                 decoder_input = out_step
             
-            # Concatenate the predictions along the time dimension
-            outputs = torch.cat(outputs, dim=1)  # (batch_size, target_len, output_size)
+            outputs = torch.cat(outputs, dim=1) 
             return outputs
 
-    def __init__(self, observation_length, prediction_horizon, device, normalize, checkpoint_file=None):
+    def __init__(self, observation_length, prediction_horizon, device, normalize=False, checkpoint_file=None):
         """
         Initializes the RNNPredictor with LSTM-based Seq2Seq, plus training configuration.
         
@@ -129,7 +132,6 @@ class RNNPredictor:
         self.input_size = 2
         self.output_size = 2
         
-        # Data sequence lengths (for reference)
         self.input_len = observation_length
         self.target_len = prediction_horizon
         
@@ -159,6 +161,8 @@ class RNNPredictor:
             if 'mean' in checkpoint:
                 self.mean = checkpoint['mean']
                 self.std  = checkpoint['std']
+                self.normalize = True
+                print("please note model was trained on normalized values => self.normalize is set to True")
 
     def save_checkpoint(self, saving_checkpoint_path):
         """
@@ -176,7 +180,7 @@ class RNNPredictor:
             checkpoint['mean'] = self.mean
             checkpoint['std'] =  self.std
             
-        torch.save(checkpoint, f'{saving_checkpoint_path}/trained_model.pth')
+        torch.save(checkpoint, f'{saving_checkpoint_path}/rnn_trained_model.pth')
     
     def train(self, train_loader, valid_loader=None, saving_checkpoint_path=None):
         """
@@ -209,11 +213,10 @@ class RNNPredictor:
     
             for id_b, batch in enumerate(load_train):
                 obs_tensor, target_tensor = batch
-                obs_tensor = obs_tensor.to(self.device)  # shape [B, obs_seq_len, 4]
-                target_tensor = target_tensor.to(self.device)  # shape [B, pred_seq_len, 4]
+                obs_tensor = obs_tensor.to(self.device)  
+                target_tensor = target_tensor.to(self.device)  
                 
                 if self.normalize:
-                    # Input velocities and target velocities
                     input_vel = obs_tensor[:, 1:, 2:4]  # skip first frame’s velocity
                     input_vel_norm = (input_vel - self.mean[2:]) / self.std[2:]
                     target_vel = target_tensor[:, :, 2:4]
@@ -234,27 +237,26 @@ class RNNPredictor:
                 # Compute ADE / FDE on Absolute Positions
                 with torch.no_grad():
                     if self.normalize:
-                        pred_vel = pred_vel_norm * self.std[2:] + self.mean[2:] #Unnormalize predicted velocities
+                        pred_vel = pred_vel_norm * self.std[2:] + self.mean[2:] 
                     else:
-                        pred_vel = pred_vel_norm  # [B, pred_seq_len, 2]
+                        pred_vel = pred_vel_norm  
                     
                     # Convert velocities -> absolute positions starting from the last observed absolute position
                     last_obs_pos = obs_tensor[:, -1, 0:2]   
                     B, T, _ = pred_vel.shape
                     pred_positions = torch.zeros(B, T, 2, device=self.device)
-                    pred_positions[:, 0, :] = last_obs_pos + pred_vel[:, 0, :] # first predicted position:
+                    pred_positions[:, 0, :] = last_obs_pos + pred_vel[:, 0, :] 
                     
                     for t in range(1, T):
                         pred_positions[:, t, :] = pred_positions[:, t-1, :] + pred_vel[:, t, :]
                     
-                    target_positions = target_tensor[:, :, 0:2]  # Ground-truth absolute positions
+                    target_positions = target_tensor[:, :, 0:2]  
                     
                     ade_batch = calculate_ade(pred_positions, target_positions)
                     fde_batch = calculate_fde(pred_positions, target_positions)
                     epoch_ade += ade_batch
                     epoch_fde += fde_batch
                     
-                # Update your progress bar
                 load_train.set_postfix({
                     'loss': f"{loss.item():.4f}",
                     'ADE':  f"{ade_batch:.4f}",
@@ -264,29 +266,23 @@ class RNNPredictor:
     
                 if valid_loader is not None:
                     val_loss = self.validate(valid_loader)
-                    
-                    # Check for improvement
+
                     if val_loss < self.best_val_loss:
                         self.best_val_loss = val_loss
                         self.epochs_without_improvement = 0
                         
-                        # Optionally save the best model so far
                         if saving_checkpoint_path is not None:
                             self.save_checkpoint(saving_checkpoint_path)
                     else:
                         self.epochs_without_improvement += 1
                     
-                    # Early stopping
                     if self.epochs_without_improvement >= self.patience:
                         print("Early stopping triggered.")
                         break
                     
-            # Average the losses/metrics over the entire epoch
             avg_epoch_loss = epoch_loss / len(train_loader)
             avg_epoch_ade  = epoch_ade  / len(train_loader)
             avg_epoch_fde  = epoch_fde  / len(train_loader)
-    
-            # Print epoch results
             print(f"\nEpoch {epoch+1}/{self.num_epochs}")
             print(f"Train - Loss: {avg_epoch_loss:.4f}, ADE: {avg_epoch_ade:.4f}, FDE: {avg_epoch_fde:.4f}")    
         
@@ -364,8 +360,7 @@ class RNNPredictor:
                     input_vel = obs_tensor[:, 1:, 2:4]
                     pred_vel  = self.model(input_vel, target_tensor.shape[1])    
                 
-                # Reconstruct predicted absolute positions
-                last_obs_pos = obs_tensor[:, -1, 0:2]  # [B, 2]
+                last_obs_pos = obs_tensor[:, -1, 0:2]
                 B, T, _ = pred_vel.shape
                 pred_positions = torch.zeros((B, T, 2), device=self.device)
                 pred_positions[:, 0, :] = last_obs_pos + pred_vel[:, 0, :] # First future position
@@ -384,40 +379,66 @@ class RNNPredictor:
         return ade, fde
     
     
-    def predict(self, obs_tensor, target_len):
+    def predict(self, obs_tensors):
         """
-        Predict future absolute positions given obs_tensor.
+        Predict future absolute positions given a list of observed trajectories.
         
-        If self.normalize == True, we:
-          1) Normalize the input velocities,
-          2) Predict normalized velocities,
-          3) Unnormalize them,
-          4) Cumulatively sum to get positions.
-        
-        Otherwise, we skip normalization.
+        Each observation in obs_tensors is a list or array of absolute positions [x, y]
+        per agent. The function:
+          1) Computes velocities as differences between consecutive positions.
+          2) Pads the velocity sequence at the beginning if it's shorter than (observation_len - 1).
+          3) Stacks the velocities into a batch and predicts future velocities using self.model.
+          4) Reconstructs the absolute positions by cumulatively summing the predicted velocities,
+             starting from the last observed absolute position.
         
         Returns:
-            Tensor of shape [B, target_len, 2] for predicted absolute positions.
+            A list of predictions, where each element is a NumPy array of shape [target_len, 2]
+            representing the predicted future absolute positions for that agent.
         """
         self.model.eval()
+        processed_velocities = []
+    
+        for trajectory in obs_tensors:
+            traj_tensor = torch.tensor(trajectory, dtype=torch.float32, device=self.device)
+            
+            if traj_tensor.shape[0] == 1:
+                processed_velocities.append(
+                    torch.zeros((self.input_len - 1, 2), dtype=torch.float32, device=self.device)
+                )
+                continue
+            
+            obs_vel = traj_tensor[1:] - traj_tensor[:-1]
+            
+            if obs_vel.shape[0] < self.input_len - 1:
+                pad_size = self.input_len - 1 - obs_vel.shape[0]
+                pad = torch.zeros((pad_size, 2), dtype=torch.float32, device=self.device)
+                obs_vel = torch.cat([pad, obs_vel], dim=0)
+            
+            processed_velocities.append(obs_vel)
         
-        obs_tensor = obs_tensor.to(self.device)
+        velocities_batch = torch.stack(processed_velocities, dim=0)
+        
         with torch.no_grad():
             if self.normalize:
-                input_vel_norm = (obs_tensor[:, 1:, 2:4] - self.mean[2:]) / self.std[2:]
-                pred_vel_norm = self.model(input_vel_norm, target_len)
+                input_vel_norm = (velocities_batch - self.mean[2:]) / self.std[2:]
+                pred_vel_norm = self.model(input_vel_norm, self.target_len)
                 pred_vel = pred_vel_norm * self.std[2:] + self.mean[2:]
             else:
-                input_vel = obs_tensor[:, 1:, 2:4]
-                pred_vel  = self.model(input_vel, target_len)
-
-            last_obs_pos = obs_tensor[:, -1, 0:2]  # [B, 2]
-            B, T, _ = pred_vel.shape
-            
-            pred_positions = torch.zeros((B, T, 2), device=self.device)
-            pred_positions[:, 0, :] = last_obs_pos + pred_vel[:, 0, :]
-            
-            for t in range(1, T):
-                pred_positions[:, t, :] = pred_positions[:, t-1, :] + pred_vel[:, t, :]
+                pred_vel = self.model(velocities_batch, self.target_len)
         
-        return pred_positions
+        # Reconstruct absolute positions from the predicted velocities.
+        pred_positions_batch = []
+        for i, trajectory in enumerate(obs_tensors):
+            traj_tensor = torch.tensor(trajectory, dtype=torch.float32, device=self.device)
+            last_obs_pos = traj_tensor[-1, 0:2]  
+            pred_vel_i = pred_vel[i]          
+            
+            # Initialize predicted positions.
+            pred_positions = torch.zeros((self.target_len, 2), dtype=torch.float32, device=self.device)
+            pred_positions[0] = last_obs_pos + pred_vel_i[0]
+            for t in range(1, self.target_len):
+                pred_positions[t] = pred_positions[t - 1] + pred_vel_i[t]        
+            pred_positions_batch.append(pred_positions)
+    
+        predictions = [pred.cpu().numpy() for pred in pred_positions_batch]
+        return predictions

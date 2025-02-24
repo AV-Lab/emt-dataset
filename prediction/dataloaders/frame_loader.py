@@ -11,7 +11,7 @@ import math
 import pickle
 from torch.utils.data import Dataset
 
-def compute_adjacency_matrix(locations, threshold=200, normalize=True):
+def compute_adjacency_matrix(locations, threshold=100, normalize=True):
     """
     Compute a simple adjacency matrix based on Euclidean distance,
     optionally do symmetrical normalization:  A_hat = D^-1/2 (A+I) D^-1/2
