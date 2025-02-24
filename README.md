@@ -1,7 +1,7 @@
 # EMT Dataset
 
 <p align="center">
-    <img src="assets/Multi_object_tracking_with _gt.gif" width="1200px"/>
+    <img src="assets/Multi_object_tracking_with _ground-truth.gif" width="1200px"/>
     <br>
     <i>Multi-object tracking with ground truth annotations</i>
 </p>
