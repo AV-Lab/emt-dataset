@@ -7,3 +7,4 @@ temp/
 
 prediction/results/
 test.ipynb
+prediction/*_*_*/

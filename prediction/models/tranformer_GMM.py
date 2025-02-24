@@ -33,7 +33,7 @@ class ModelConfig:
     future_trajectory: int = 10
     device: Optional[torch.device] = None
     normalize: bool = True
-    checkpoint_file: Optional[str] = None  # Allow user-defined checkpoint
+    saving_checkpoint_path: Optional[str] = None  # Allow user-defined checkpoint
     win_size: int = 3
     mean: torch.tensor = torch.tensor([0.0, 0.0, 0.0, 0.0])
     std: torch.tensor = torch.tensor([1.0, 1.0, 1.0, 1.0])
@@ -55,7 +55,7 @@ class ModelConfig:
 
     # Optimizer parameters
     lr_mul: float = 0.2
-    n_warmup_steps: int = 4000 #2000 #3000 #3500 #4000
+    n_warmup_steps: int = 2000 #2000 #3000 #3500 #4000
     optimizer_betas: Tuple[float, float] = (0.9, 0.98)
     optimizer_eps: float = 1e-9
 
@@ -262,7 +262,7 @@ class AttentionGMM(nn.Module):
 
         # Logging path
         self.log_save_path = self.config.log_save_path
-        self.checkpoint_file = self.config.checkpoint_file
+        self.checkpoint_file = self.config.saving_checkpoint_path
         self.best_of_k = self.config.best_of_k
     
     def _init_optimizer_params(self):
