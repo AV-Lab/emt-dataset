@@ -134,5 +134,8 @@ if __name__ == '__main__':
                                  args.normalize,
                                  args.checkpoint,
                                  args.window_size)
-    predictor.train(train_loader,test_loader,saving_checkpoint_path='checkpoints/transformer-gmm.pth') 
-    # predictor.evaluate(test_loader)
+    if args.setting=='train':
+        predictor.train(train_loader,test_loader,saving_checkpoint_path='checkpoints/transformer-gmm.pth') 
+    elif args.setting=='evaluate':
+        assert args.checkpoint is not None, "Checkpoint file is required for evaluation"
+        predictor.evaluate(test_loader)
