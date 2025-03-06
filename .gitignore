@@ -8,3 +8,11 @@ temp/
 prediction/results/
 test.ipynb
 prediction/*_*_*/
+
+/tracking/emt/frames/
+/tracking/emt/raw/
+/tracking/ByteTrack/
+/tracking/EVAL_RESULTS/
+/tracking/Trackers/
+/tracking/TrackEval/
+/tracking/error_log.txt
