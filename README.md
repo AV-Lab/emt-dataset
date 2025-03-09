@@ -89,7 +89,12 @@ chmod +x download.sh
 # Statistics
 python dataset_statistics.py
 ```
-
+3. To visualize detection data run the following command:
+```bash
+# visualize
+cd visualize
+python tracking_visualize.py
+```
 ## Dataset Structure
 To use base models, the dataset structure should be as follows:
 ```
@@ -100,6 +105,7 @@ emt-dataset/
 │   │   ├── tracking_annotations/     # Multi-object tracking data
 │   │   ├── prediction_annotations/   # Behavior prediction labels
 │   │   └── metadata.txt             # Dataset metadata
+│   │── frames/                      # extracted frames(annotated frames only)
 │   └── videos/                      # Raw video sequences
 ```
 NB: Videos are not necessary unless you intend to use visual cues 
