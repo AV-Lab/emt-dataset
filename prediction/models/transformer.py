@@ -14,9 +14,11 @@ from torch.autograd import Variable # storing data while learning
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
-from typing import Tuple, Dict, Optional, List,Any
+from typing import Tuple, Dict, Optional, List, Any
 from dataclasses import dataclass, asdict
 from evaluation.distance_metrics import calculate_ade,calculate_fde
+from evaluation.utils import plot_metrics, setup_logger
+from evaluation.metric_tracker import MetricTracker
 from utils import set_seeds
 from tqdm import tqdm
 import os
@@ -76,6 +78,7 @@ class ModelConfig:
     def get_device(self) -> torch.device:
         """Return the device for computation."""
         return self.device if self.device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
     def display_config(self, verbose: bool = True) -> None:
         """
         Pretty print the model configuration using logging.
@@ -170,6 +173,50 @@ class ScheduledOptim():
 
         for param_group in self._optimizer.param_groups:
             param_group['lr'] = lr
+            
+class Linear_Embeddings(nn.Module):
+    def __init__(self, input_features,d_model):
+        super(Linear_Embeddings, self).__init__()
+        # lut => lookup table
+        self.lut = nn.Linear(input_features, d_model)
+        self.d_model = d_model
+
+    def forward(self, x):
+        return self.lut(x) * math.sqrt(self.d_model)
+
+
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model: int, dropout: float = 0.0, max_len: int = 5000, batch_first: bool=True):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        self.batch_first = batch_first
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        if batch_first: 
+            pe = torch.zeros(1,max_len, d_model)
+            pe[0,:, 0::2] = torch.sin(position * div_term)
+            pe[0,:, 1::2] = torch.cos(position * div_term)
+        else: 
+            pe = torch.zeros(max_len, 1, d_model)
+            pe[:, 0, 0::2] = torch.sin(position * div_term)
+            pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Args:
+            x: Tensor, shape [seq_len, batch_size, embedding_dim] 
+            x: Tensor, shape [batch_size, seq_len, embedding_dim]batch first
+        """
+        #print("pe[:,:x.size(1),:] shape: ",self.pe.shape)
+        x = x + self.pe[:,:x.size(1),:] if self.batch_first else x + self.pe[:x.size(0)]
+
+        return self.dropout(x)            
+            
+            
+            
 
 class AttentionEMT(nn.Module):
     """
@@ -188,11 +235,7 @@ class AttentionEMT(nn.Module):
         actn (str): Activation function to use
         device (torch.device): Device to use for computation
     """
-    def __init__(
-        self,
-        config: Optional[ModelConfig] = None,
-        **kwargs
-    ):
+    def __init__(self, config: Optional[ModelConfig] = None, checkpoint_file=None, **kwargs):
         super().__init__()
 
         # Create config object first
@@ -203,6 +246,9 @@ class AttentionEMT(nn.Module):
         self._init_model_params()
         self._init_layers()
         self._init_optimizer_params()
+        
+        if checkpoint_file is not None:
+            self.load_model(checkpoint_file)
         
         self.tracker = MetricTracker()
     
@@ -281,13 +327,8 @@ class AttentionEMT(nn.Module):
             batch_first=self.config.batch_first
         )
         
-        # Encoder
         self.encoder = self._build_encoder()
-        
-        # Decoder
         self.decoder = self._build_decoder()
-        
-        # Output projection layer
         self.output_layer = Linear_Embeddings(self.d_model, self.output_features)
     
     def _build_encoder(self):
@@ -317,52 +358,7 @@ class AttentionEMT(nn.Module):
         return nn.TransformerDecoder(
             decoder_layer = decoder_layer,
             num_layers = self.config.num_decoder_layers
-        )        
-
-    def forward(self, src: torch.Tensor, tgt: torch.Tensor,
-                src_mask: torch.Tensor = None, tgt_mask: torch.Tensor = None) -> torch.Tensor:
-        """
-        Forward pass of the model.
-        
-        Args:
-            src (torch.Tensor): Source sequence
-            tgt (torch.Tensor): Target sequence
-            src_mask (torch.Tensor, optional): Mask for source sequence
-            tgt_mask (torch.Tensor, optional): Mask for target sequence
-            
-        Returns:
-            torch.Tensor: Output predictions
-        """
-        # Add input validation
-        if src.dim() != 3 or tgt.dim() != 3:
-            raise ValueError("Expected 3D tensors for src and tgt")
-        
-        # Move inputs to device
-        src = src.to(self.device)
-        tgt = tgt.to(self.device)
-        if src_mask is not None:
-            src_mask = src_mask.to(self.device)
-        if tgt_mask is not None:
-            tgt_mask = tgt_mask.to(self.device)
-        
-        # Encoder forward pass
-        encoder_embed = self.encoder_input_layer(src)
-        encoder_embed = self.positional_encoding(encoder_embed)
-        encoder_output = self.encoder(src=encoder_embed)
-        
-        # Decoder forward pass
-        decoder_embed = self.decoder_input_layer(tgt)
-        decoder_embed = self.positional_encoding(decoder_embed)
-        decoder_output = self.decoder(
-            tgt=decoder_embed,
-            memory=encoder_output,
-            tgt_mask=tgt_mask
         )
-        
-        # Output projection
-        output = self.output_layer(decoder_output)
-        
-        return output
 
     
     def load_model(self, ckpt_path: str):
@@ -475,31 +471,119 @@ class AttentionEMT(nn.Module):
         
         return should_stop, self.best_metrics.copy()
     
-    def calculate_metrics(self,pred: torch.Tensor, target: torch.Tensor, obs_last_pos: torch.Tensor) -> Tuple[float, float]:
+    def _save_checkpoint(self,optimizer, epoch=10,save_model=True,save_frequency=10,save_path="/results"):
+        # Set up directory structure
+        models_dir = os.path.join(save_path, 'pretrained_models')
+        os.makedirs(models_dir, exist_ok=True)
+        logger = logging.getLogger('AttentionEMT')
+        
+        if save_model and (epoch + 1) % save_frequency == 0:
+            model_state = {
+                'model_state_dict': self.state_dict(),  # Save directly
+                'optimizer_state_dict': optimizer._optimizer.state_dict(),
+                'training_history': self.tracker.history,
+                'best_metrics': self.tracker.best_metrics,
+                'train_mean': self.mean,
+                'train_std': self.std,
+                'model_config': {
+                    # Only save what you actually use for loading
+                    'in_features': self.input_features,
+                    'out_features': self.output_features,
+                    'num_heads': self.num_heads,
+                    'num_encoder_layers': self.config.num_encoder_layers,
+                    'num_decoder_layers': self.config.num_decoder_layers,
+                    'embedding_size': self.d_model,
+                    'dropout': self.dropout_encoder
+                }
+            }
+            # Save the model
+            checkpoint_name = f'Transformer_P_{self.past_trajectory}_F_{self.future_trajectory}_Warm_{self.n_warmup_steps}_W_{self.config.win_size}_lr_mul_{self.lr_mul}_epoch_{epoch}.pth'
+            os.makedirs(save_path, exist_ok=True)
+            torch.save(model_state, os.path.join(models_dir, f"{checkpoint_name}"))
+            logger.info(f"Saved checkpoint to: {save_path}")
+            
+    def _generate_square_mask(
+        self,
+        dim_trg: int,
+        dim_src: int,
+        mask_type: str = "tgt"
+    ) -> torch.Tensor:
         """
-        Calculate ADE and FDE for predictions
+        Generate a square mask for transformer attention mechanisms.
+        
         Args:
-            pred: predicted velocities [batch, seq_len, 2]
-            target: target velocities [batch, seq_len, 2]
-            obs_last_pos: last observed position [batch, 1, 2]
-            mean: mean values for denormalization
-            std: standard deviation values for denormalization
-            device: computation device
+            dim_trg (int): Target sequence length.
+            dim_src (int): Source sequence length.
+            mask_type (str): Type of mask to generate. Can be "src", "tgt", or "memory".
+        
+        Returns:
+            torch.Tensor: A mask tensor with `-inf` values to block specific positions.
         """
-        if self.normalized:
-            # Denormalize
-            pred = pred * self.std[2:] + self.mean[2:]
-            target = target * self.std[2:] + self.mean[2:]
+        # Initialize a square matrix filled with -inf (default to a fully masked state)
+        mask = torch.ones(dim_trg, dim_trg) * float('-inf')
+
+        if mask_type == "src":
+            # Source mask (self-attention in the encoder)
+            # Creates an upper triangular matrix with -inf above the diagonal
+            mask = torch.triu(mask, diagonal=1)
+
+        elif mask_type == "tgt":
+            # Target mask (self-attention in the decoder)
+            # Prevents the decoder from attending to future tokens
+            mask = torch.triu(mask, diagonal=1)
+
+        elif mask_type == "memory":
+            # Memory mask (cross-attention between encoder and decoder)
+            # Controls which encoder outputs the decoder can attend to
+            mask = torch.ones(dim_trg, dim_src) * float('-inf')
+            mask = torch.triu(mask, diagonal=1)  # Prevents attending to future positions
+
+        return mask
+    
+    def forward(self, src: torch.Tensor, tgt: torch.Tensor,
+                src_mask: torch.Tensor = None, tgt_mask: torch.Tensor = None) -> torch.Tensor:
+        """
+        Forward pass of the model.
         
-        # Convert velocities to absolute positions through cumsum
-        pred_pos = pred.cpu().numpy().cumsum(1) + obs_last_pos.cpu().numpy()
-        target_pos = target.cpu().numpy().cumsum(1) + obs_last_pos.cpu().numpy()
+        Args:
+            src (torch.Tensor): Source sequence
+            tgt (torch.Tensor): Target sequence
+            src_mask (torch.Tensor, optional): Mask for source sequence
+            tgt_mask (torch.Tensor, optional): Mask for target sequence
+            
+        Returns:
+            torch.Tensor: Output predictions
+        """
+        # Add input validation
+        if src.dim() != 3 or tgt.dim() != 3:
+            raise ValueError("Expected 3D tensors for src and tgt")
         
-        # Calculate metrics
-        ade = calculate_ade(pred_pos, target_pos.tolist())
-        fde = calculate_fde(pred_pos, target_pos.tolist())
+        # Move inputs to device
+        src = src.to(self.device)
+        tgt = tgt.to(self.device)
+        if src_mask is not None:
+            src_mask = src_mask.to(self.device)
+        if tgt_mask is not None:
+            tgt_mask = tgt_mask.to(self.device)
         
-        return ade, fde
+        # Encoder forward pass
+        encoder_embed = self.encoder_input_layer(src)
+        encoder_embed = self.positional_encoding(encoder_embed)
+        encoder_output = self.encoder(src=encoder_embed)
+        
+        # Decoder forward pass
+        decoder_embed = self.decoder_input_layer(tgt)
+        decoder_embed = self.positional_encoding(decoder_embed)
+        decoder_output = self.decoder(
+            tgt=decoder_embed,
+            memory=encoder_output,
+            tgt_mask=tgt_mask
+        )
+        
+        # Output projection
+        output = self.output_layer(decoder_output) 
+        return output
+    
     def train(
         self,
         train_dl: DataLoader,
@@ -516,7 +600,8 @@ class AttentionEMT(nn.Module):
         # Setup logger
         logger = logging.getLogger('AttentionEMT')
         if not logger.handlers:
-            logger = self.setup_logger(save_path=self.log_save_path)
+            log_name = f'transformer_training_metrics_model_{self.past_trajectory}_{self.future_trajectory}_training_{self.n_warmup_steps}_W_{self.config.win_size}_lr_mul_{self.lr_mul}.log'
+            logger = setup_logger(log_name, save_path=self.log_save_path)
         
         self.to(self.device)
         self._init_weights()
@@ -642,7 +727,7 @@ class AttentionEMT(nn.Module):
 
         # Plot training history if verbose
         if verbose:
-            self.plot_metrics(
+            plot_metrics(
                 self.tracker.history['train_loss'],
                 self.tracker.history['test_loss'],
                 self.tracker.history['train_ade'],
@@ -650,42 +735,17 @@ class AttentionEMT(nn.Module):
                 self.tracker.history['train_fde'],
                 self.tracker.history['test_fde'],
                 enc_seq_len,
-                dec_seq_len
+                dec_seq_len,
+                self.log_save_path,
+                self.config.win_size,
+                self.lr_mul
             )
             logger.info(f"Training plots saved to {metrics_dir}")
         
         return self, self.tracker.history
     
-    def _save_checkpoint(self,optimizer, epoch=10,save_model=True,save_frequency=10,save_path="/results"):
-        # Set up directory structure
-        models_dir = os.path.join(save_path, 'pretrained_models')
-        os.makedirs(models_dir, exist_ok=True)
-        logger = logging.getLogger('AttentionEMT')
-        
-        if save_model and (epoch + 1) % save_frequency == 0:
-            model_state = {
-                'model_state_dict': self.state_dict(),  # Save directly
-                'optimizer_state_dict': optimizer._optimizer.state_dict(),
-                'training_history': self.tracker.history,
-                'best_metrics': self.tracker.best_metrics,
-                'train_mean': self.mean,
-                'train_std': self.std,
-                'model_config': {
-                    # Only save what you actually use for loading
-                    'in_features': self.input_features,
-                    'out_features': self.output_features,
-                    'num_heads': self.num_heads,
-                    'num_encoder_layers': self.config.num_encoder_layers,
-                    'num_decoder_layers': self.config.num_decoder_layers,
-                    'embedding_size': self.d_model,
-                    'dropout': self.dropout_encoder
-                }
-            }
-            # Save the model
-            checkpoint_name = f'Transformer_P_{self.past_trajectory}_F_{self.future_trajectory}_Warm_{self.n_warmup_steps}_W_{self.config.win_size}_lr_mul_{self.lr_mul}_epoch_{epoch}.pth'
-            os.makedirs(save_path, exist_ok=True)
-            torch.save(model_state, os.path.join(models_dir, f"{checkpoint_name}"))
-            logger.info(f"Saved checkpoint to: {save_path}")
+
+            
     def evaluate(self, test_loader=None, ckpt_path=None, from_train=False):
         """
         Evaluate the model on test data
@@ -708,7 +768,8 @@ class AttentionEMT(nn.Module):
                 # Setup logger
                 logger = logging.getLogger('AttentionEMT')
                 if not logger.handlers:
-                    logger = self.setup_logger(save_path=self.log_save_path,eval=True)                                                   
+                    log_name = f'eval_{self.past_trajectory}_{self.future_trajectory}_W_{self.config.win_size}.log' 
+                    logger = setup_logger(log_name, save_path=self.log_save_path,eval=True)                                                   
            
             # Set evaluation mode :  Need to use nn.Module's train method for mode setting
             super().train(False)  
@@ -766,306 +827,107 @@ class AttentionEMT(nn.Module):
         finally:
             # Restore original training mode
             super().train(training)
-    def _generate_square_mask(
-        self,
-        dim_trg: int,
-        dim_src: int,
-        mask_type: str = "tgt"
-    ) -> torch.Tensor:
-        """
-        Generate a square mask for transformer attention mechanisms.
-        
-        Args:
-            dim_trg (int): Target sequence length.
-            dim_src (int): Source sequence length.
-            mask_type (str): Type of mask to generate. Can be "src", "tgt", or "memory".
-        
-        Returns:
-            torch.Tensor: A mask tensor with `-inf` values to block specific positions.
-        """
-        # Initialize a square matrix filled with -inf (default to a fully masked state)
-        mask = torch.ones(dim_trg, dim_trg) * float('-inf')
-
-        if mask_type == "src":
-            # Source mask (self-attention in the encoder)
-            # Creates an upper triangular matrix with -inf above the diagonal
-            mask = torch.triu(mask, diagonal=1)
-
-        elif mask_type == "tgt":
-            # Target mask (self-attention in the decoder)
-            # Prevents the decoder from attending to future tokens
-            mask = torch.triu(mask, diagonal=1)
-
-        elif mask_type == "memory":
-            # Memory mask (cross-attention between encoder and decoder)
-            # Controls which encoder outputs the decoder can attend to
-            mask = torch.ones(dim_trg, dim_src) * float('-inf')
-            mask = torch.triu(mask, diagonal=1)  # Prevents attending to future positions
-
-        return mask
-    
-    def setup_logger(self,name: str = 'AttentionEMT', save_path: str = None, level=logging.INFO,eval=False):
-        """Set up logger configuration.
-        
-        Args:
-            name (str): Logger name
-            save_path (str): Directory to save log file
-            level: Logging level
             
-        Returns:
-            logging.Logger: Configured logger
+    def predict(self, obs_tensors):
         """
-        logger = logging.getLogger(name)
-        logger.setLevel(level)
+        Predict future absolute positions given a list of observed trajectories.
         
-        # Clear existing handlers
-        if logger.hasHandlers():
-            logger.handlers.clear()
-        
-        # Create formatters
-        detailed_formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        simple_formatter = logging.Formatter('%(message)s')
-        
-        # Stream handler for console output
-        stream_handler = logging.StreamHandler(sys.stdout)
-        stream_handler.setFormatter(simple_formatter)
-        logger.addHandler(stream_handler)
-        
-        # File handler if save_path is provided
-        if save_path:
-            if eval: 
-                log_path = Path(save_path) / f'transformer_eval_metrics_model_{self.past_trajectory}_{self.future_trajectory}_W_{self.config.win_size}.log'
-            else:
-                 log_path = Path(save_path) / f'transformer_training_metrics_model_{self.past_trajectory}_{self.future_trajectory}_training_{self.n_warmup_steps}_W_{self.config.win_size}_lr_mul_{self.lr_mul}.log'
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            file_handler = logging.FileHandler(str(log_path),mode='w')
-            file_handler.setFormatter(detailed_formatter)
-            logger.addHandler(file_handler)
-        
-        return logger
-    
-    def plot_metrics(self,
-        train_losses: List[float],
-        test_losses: List[float],
-        train_ades: List[float],
-        test_ades: List[float],
-        train_fdes: List[float],
-        test_fdes: List[float],
-        enc_seq_len: int,
-        dec_seq_len: int,
-    ) -> None:
-        """Plot training metrics including best-of-N predictions.
-        
-        Args:
-            train_losses: Training loss values
-            test_losses: Test loss values
-            train_ades: Training ADE values
-            test_ades: Test ADE values
-            train_fdes: Training FDE values
-            test_fdes: Test FDE values
-            enc_seq_len: Encoder sequence length
-            dec_seq_len: Decoder sequence length
-            save_path: Path to save the plot
+        Each observation in obs_tensors is a list (or array) of absolute positions [x, y]
+        for one agent. The process is:
+          1. For each trajectory, compute velocity differences (traj[1:] - traj[:-1]).
+          2. Pad the velocity sequence at the beginning (if shorter than past_trajectory - 1).
+          3. Stack the processed velocities into a batch tensor of shape 
+             (B, past_trajectory - 1, 2).
+          4. If normalization is enabled, normalize the velocities.
+          5. Use these as the source (src) input to the Transformer.
+          6. Autoregressively generate the target (tgt) sequence:
+             - Initialize the decoder input with zeros (shape: (B, 1, 2)).
+             - For each future time step, create a target mask and run the model to obtain 
+               the next predicted velocity.
+             - Append the new token to the decoder input.
+          7. Denormalize the predicted velocities (if needed) and convert them to absolute positions
+             by cumulatively summing starting from the last observed absolute position.
+          8. Return the predictions as a list (one per agent) of NumPy arrays with shape 
+             (future_trajectory, 2).
         """
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
-        
-        # Loss plot
-        ax1.plot(train_losses, label='Train Loss', color='blue')
-        ax1.plot(test_losses, label='Test Loss', color='orange')
-        ax1.set_title('Loss', pad=20)
-        ax1.set_xlabel('Steps')
-        ax1.set_ylabel('Loss Value')
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        
-        # ADE plot
-        ax2.plot(train_ades, label='Train ADE', color='blue')
-        ax2.plot(test_ades, label='Test ADE', color='orange')
-        ax2.set_title('Average Displacement Error (ADE)', pad=20)
-        ax2.set_xlabel('Steps')
-        ax2.set_ylabel('ADE Value')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
-        
-        # FDE plot
-        ax3.plot(train_fdes, label='Train FDE', color='blue')
-        ax3.plot(test_fdes, label='Test FDE', color='orange')
-        ax3.set_title('Final Displacement Error (FDE)', pad=20)
-        ax3.set_xlabel('Steps')
-        ax3.set_ylabel('FDE Value')
-        ax3.legend()
-        ax3.grid(True, alpha=0.3)
-        
-        # Adjust layout and save
-        plt.tight_layout()
-        os.makedirs(self.log_save_path, exist_ok=True)
-        save_file = os.path.join(self.log_save_path, f'training_metrics_model_{enc_seq_len}_{dec_seq_len}_W_{self.config.win_size}_lr_mul_{self.lr_mul}.png')
-        plt.savefig(save_file, dpi=300, bbox_inches='tight')
-        plt.close()
 
-class Linear_Embeddings(nn.Module):
-    def __init__(self, input_features,d_model):
-        super(Linear_Embeddings, self).__init__()
-        # lut => lookup table
-        self.lut = nn.Linear(input_features, d_model)
-        self.d_model = d_model
-
-    def forward(self, x):
-        return self.lut(x) * math.sqrt(self.d_model)
-
-
-class PositionalEncoding(nn.Module):
-
-    def __init__(self, d_model: int, dropout: float = 0.0, max_len: int = 5000, batch_first: bool=True):
-        super().__init__()
-        self.dropout = nn.Dropout(p=dropout)
-        self.batch_first = batch_first
-
-        position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
-        if batch_first: 
-            pe = torch.zeros(1,max_len, d_model)
-            pe[0,:, 0::2] = torch.sin(position * div_term)
-            pe[0,:, 1::2] = torch.cos(position * div_term)
-        else: 
-            pe = torch.zeros(max_len, 1, d_model)
-            pe[:, 0, 0::2] = torch.sin(position * div_term)
-            pe[:, 0, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x: Tensor) -> Tensor:
-        """
-        Args:
-            x: Tensor, shape [seq_len, batch_size, embedding_dim] 
-            x: Tensor, shape [batch_size, seq_len, embedding_dim]batch first
-        """
-        #print("pe[:,:x.size(1),:] shape: ",self.pe.shape)
-        x = x + self.pe[:,:x.size(1),:] if self.batch_first else x + self.pe[:x.size(0)]
-
-        return self.dropout(x)
-
-class MetricTracker:
-    def __init__(self):
-        self.train_available = False
-        self.test_available = False
-
-        # Separate running metrics for train and test
-        self.running_metrics = {
-            'train': self._init_metric_dict(),
-            'test': self._init_metric_dict()
-        }
-        
-        self.history = {
-            'train_loss': [], 'test_loss': [],
-            'train_ade': [], 'test_ade': [],
-            'train_fde': [], 'test_fde': []
-        }
-
-        self.best_metrics = {'ade': float('inf'), 'epoch': 0}
-
-    def _init_metric_dict(self):
-        """Helper to initialize metrics dictionary."""
-        return {key: {'value': 0, 'count': 0} for key in ['loss', 'ade', 'fde']}
-    
-    def update(self, metrics_dict, batch_size, phase='train'):
-        """Update running metrics with batch results"""
-        for key, value in metrics_dict.items():
-            self.running_metrics[phase][key]['value'] += value * batch_size
-            self.running_metrics[phase][key]['count'] += batch_size
-
-    def get_averages(self, phase='train'):
-        """Compute averages for specified phase."""
-        if phase not in self.running_metrics:
-            raise ValueError(f"Invalid phase '{phase}'. Must be 'train' or 'test'.")
-
-        return {
-            key: (metric['value'] / metric['count'] if metric['count'] > 0 else 0)
-            for key, metric in self.running_metrics[phase].items()
-        }
-
-    def compute_epoch_metrics(self, phase='train'):
-        """Compute and store metrics for completed epoch."""
-        epoch_metrics = self.get_averages(phase)
-        
-        # Store epoch averages in history
-        self.history[f'{phase}_loss'].append(epoch_metrics['loss'])
-        self.history[f'{phase}_ade'].append(epoch_metrics['ade'])
-        self.history[f'{phase}_fde'].append(epoch_metrics['fde'])
-
-        # Reset running metrics for next epoch
-        self.running_metrics[phase] = self._init_metric_dict()
-        
-        return epoch_metrics
-
-    def get_current_epoch_metrics(self, phase='train'):
-        """Get most recent epoch metrics."""
-        if not self.history[f'{phase}_loss']:  # if history is empty
-            return None
+        B = len(obs_tensors)
+        desired_vel_len = self.past_trajectory - 1      
+        processed_velocities = []
+        last_positions = []
+        for traj in obs_tensors:
+            traj_tensor = torch.tensor(traj, dtype=torch.float32, device=self.device)
+            last_positions.append(traj_tensor[-1, 0:2])
+            if traj_tensor.shape[0] < 2:
+                processed_velocities.append(torch.zeros((desired_vel_len, 2), device=self.device))
+                continue
             
-        return {
-            'loss': self.history[f'{phase}_loss'][-1],
-            'ade': self.history[f'{phase}_ade'][-1],
-            'fde': self.history[f'{phase}_fde'][-1]
-        }
-
-    def get_previous_epoch_metrics(self, phase='train'):
-        """Get previous epoch metrics."""
-        if len(self.history[f'{phase}_loss']) < 2:  # need at least 2 epochs
-            return None
-            
-        return {
-            'loss': self.history[f'{phase}_loss'][-2],
-            'ade': self.history[f'{phase}_ade'][-2],
-            'fde': self.history[f'{phase}_fde'][-2]
-        }
-    def print_epoch_metrics(self, epoch, epochs, verbose=True):
-        """Print epoch metrics including best-of-N results in a side-by-side format."""
-        if not verbose:
-            return
-
-        logger = logging.getLogger('AttentionEMT')
+            obs_vel = traj_tensor[1:] - traj_tensor[:-1]  
+            if obs_vel.shape[0] < desired_vel_len:
+                pad_size = desired_vel_len - obs_vel.shape[0]
+                pad = torch.zeros((pad_size, 2), dtype=torch.float32, device=self.device)
+                obs_vel = torch.cat([pad, obs_vel], dim=0)
+            elif obs_vel.shape[0] > desired_vel_len:
+                obs_vel = obs_vel[-desired_vel_len:]
+                
+            processed_velocities.append(obs_vel)
         
-        # Get current metrics from history
-        train_metrics = self.get_current_epoch_metrics('train')
-        test_metrics = self.get_current_epoch_metrics('test') if self.test_available else None
-
-        # Get previous metrics for improvements
-        train_prev = self.get_previous_epoch_metrics('train')
-        test_prev = self.get_previous_epoch_metrics('test') if self.test_available else None
-
-        # Header
-        logger.info(f"\nEpoch [{epoch+1}/{epochs}]")
-        logger.info("-" * 100)
-        logger.info(f"{'Metric':12} {'Training':35} {'Validation':35}")
-        logger.info("-" * 100)
-
-        # Print metrics side by side
-        for metric, name in [('loss', 'Loss'), ('ade', 'ADE'), ('fde', 'FDE')]:
-            train_str = "N/A"
-            val_str = "N/A"
-
-            if train_metrics:
-                train_val = train_metrics[metric]
-                train_str = f"{train_val:.4f}"
-                if train_prev:
-                    train_imp = train_prev[metric] - train_val
-                    arrow = "↓" if train_imp > 0 else "↑"
-                    train_str += f" ({arrow} {abs(train_imp):.4f})"
-                    # train_str += f" (↓ {train_imp:.4f})"
-
-            if test_metrics:
-                val_val = test_metrics[metric]
-                val_str = f"{val_val:.4f}"
-                if test_prev:
-                    val_imp = test_prev[metric] - val_val
-                    arrow = "↓" if val_imp > 0 else "↑"
-                    val_str += f" ({arrow} {abs(val_imp):.4f})" #f" (↓ {val_imp:.4f})"
-
-            logger.info(f"{name:12} {train_str:35} {val_str:35}")
-
-        logger.info("-" * 100)
-    def reset(self, phase='train'):
-        """Reset running metrics for specified phase."""
-        self.running_metrics[phase] = self._init_metric_dict()
+        src = torch.stack(processed_velocities, dim=0)
+        if self.normalized:
+            src = (src - self.mean[2:]) / self.std[2:]
+        
+        future_len = self.future_trajectory
+        decoder_input = torch.zeros(B, 1, self.output_features, device=self.device)
+        pred_tokens = []
+        
+        with torch.no_grad():
+            for t in range(future_len):
+                current_tgt_len = decoder_input.size(1)
+                tgt_mask = self._generate_square_mask(current_tgt_len, current_tgt_len, mask_type="tgt").to(self.device)
+                out = self(src, decoder_input, tgt_mask=tgt_mask)
+                next_token = out[:, -1, :] 
+                pred_tokens.append(next_token)
+                decoder_input = torch.cat([decoder_input, next_token.unsqueeze(1)], dim=1)
+        
+        pred_vel = torch.stack(pred_tokens, dim=1)
+        
+        if self.normalized:
+            pred_vel = pred_vel * self.std[2:] + self.mean[2:]
+        
+        pred_positions_batch = []
+        for i in range(B):
+            last_pos = last_positions[i]  
+            pred_vel_i = pred_vel[i]       
+            pred_positions = torch.zeros(future_len, 2, device=self.device)
+            pred_positions[0] = last_pos + pred_vel_i[0]
+            for t in range(1, future_len):
+                pred_positions[t] = pred_positions[t-1] + pred_vel_i[t]
+            pred_positions_batch.append(pred_positions.cpu().numpy())
+        
+        return pred_positions_batch
+    
+    def calculate_metrics(self,pred: torch.Tensor, target: torch.Tensor, obs_last_pos: torch.Tensor) -> Tuple[float, float]:
+        """
+        Calculate ADE and FDE for predictions
+        Args:
+            pred: predicted velocities [batch, seq_len, 2]
+            target: target velocities [batch, seq_len, 2]
+            obs_last_pos: last observed position [batch, 1, 2]
+            mean: mean values for denormalization
+            std: standard deviation values for denormalization
+            device: computation device
+        """
+        if self.normalized:
+            # Denormalize
+            pred = pred * self.std[2:] + self.mean[2:]
+            target = target * self.std[2:] + self.mean[2:]
+        
+        # Convert velocities to absolute positions through cumsum
+        pred_pos = pred.cpu().numpy().cumsum(1) + obs_last_pos.cpu().numpy()
+        target_pos = target.cpu().numpy().cumsum(1) + obs_last_pos.cpu().numpy()
+        
+        # Calculate metrics
+        ade = calculate_ade(pred_pos, target_pos.tolist())
+        fde = calculate_fde(pred_pos, target_pos.tolist())
+        
+        return ade, fde

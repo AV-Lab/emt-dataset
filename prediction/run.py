@@ -61,9 +61,17 @@ def create_predictor(past_trajectory, future_trajectory, max_nodes, predictor, d
     elif predictor == "gat_lstm":
         return GATLSTMPredictor(past_trajectory, future_trajectory, device, max_nodes, normalize, checkpoint_file) 
     elif predictor == 'transformer':
-        return AttentionEMT(past_trajectory, future_trajectory, device, normalize,  checkpoint_file)
+        return AttentionEMT(checkpoint_file=checkpoint_file,
+                            past_trajectory=past_trajectory, 
+                            future_trajectory=future_trajectory, 
+                            device=device, 
+                            normalize=normalize)
     elif predictor == 'transformer-gmm':
-        return AttentionGMM(past_trajectory=past_trajectory, future_trajectory=future_trajectory, device=device, normalize=normalize, checkpoint_file=checkpoint_file)
+        return AttentionGMM(checkpoint_file=checkpoint_file,
+                            past_trajectory=past_trajectory, 
+                            future_trajectory=future_trajectory, 
+                            device=device, 
+                            normalize=normalize)
     else:
         return RNNPredictor(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
         
@@ -99,7 +107,7 @@ if __name__ == '__main__':
     p.add_argument('--annotations_path', type=str, help='If annotations are placed in a location different from recommended')
     p.add_argument('--num_workers', type=int, default=8, help='Number of workers for dataloader')
     p.add_argument('--normalize', default=False, type=bool, help='Normalize data, recommended True')
-    p.add_argument('--batch_size', type=int, default=64, help='Batch size')
+    p.add_argument('--batch_size', type=int, default=32, help='Batch size')
     p.add_argument('--device', type=str, default='cuda:0', help='Device to run the model',choices=['cuda', 'cpu'])
     p.add_argument('--seed', type=int, default=42, help='Seed for reproducibility -> set zero for random seed generation')
 
