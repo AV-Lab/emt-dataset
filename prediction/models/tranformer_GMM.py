@@ -13,6 +13,8 @@ import numpy as np
 import math
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
+import warnings
+warnings.filterwarnings("ignore")
 
 from typing import Tuple, Dict, Optional, List, Union,Any
 from dataclasses import dataclass, asdict
@@ -31,7 +33,8 @@ class ModelConfig:
     future_trajectory: int = 10
     device: Optional[torch.device] = None
     normalize: bool = True
-    checkpoint_file: Optional[str] = None  # Allow user-defined checkpoint
+    saving_checkpoint_path: Optional[str] = None  # Allow user-defined checkpoint
+    win_size: int = 3
     mean: torch.tensor = torch.tensor([0.0, 0.0, 0.0, 0.0])
     std: torch.tensor = torch.tensor([1.0, 1.0, 1.0, 1.0])
     in_features: int = 2
@@ -43,7 +46,7 @@ class ModelConfig:
     dropout: float = 0.2
     batch_first: bool = True
     actn: str = "gelu"
-    win_size: int = 3
+    
     
 
     # GMM parameters
@@ -52,7 +55,7 @@ class ModelConfig:
 
     # Optimizer parameters
     lr_mul: float = 0.2
-    n_warmup_steps: int = 3000 #2000 #3000 #3500
+    n_warmup_steps: int = 2000 #2000 #3000 #3500 #4000
     optimizer_betas: Tuple[float, float] = (0.9, 0.98)
     optimizer_eps: float = 1e-9
 
@@ -62,6 +65,9 @@ class ModelConfig:
 
     # logging:
     log_save_path = 'results/metrics/training_metrics'
+
+    #eval_metrics
+    best_of_k = 5
     
 
     def __post_init__(self):
@@ -101,6 +107,12 @@ class ModelConfig:
             logger.info(f"Dropout Rate:        {self.dropout}")
             logger.info(f"Batch First:         {self.batch_first}")
             logger.info(f"Activation Function: {self.actn}")
+
+            logger.info(f"Dataset info:")
+            logger.info("-"*20)
+            logger.info(f"sliding window: {self.win_size}")
+            logger.info(f"past trajectory:   {self.past_trajectory}")
+            logger.info(f"future trajectory: {self.future_trajectory}")
             
             logger.info("\nGMM Settings:")
             logger.info("-"*20)
@@ -250,7 +262,8 @@ class AttentionGMM(nn.Module):
 
         # Logging path
         self.log_save_path = self.config.log_save_path
-        self.checkpoint_file = self.config.checkpoint_file
+        self.checkpoint_file = self.config.saving_checkpoint_path
+        self.best_of_k = self.config.best_of_k
     
     def _init_optimizer_params(self):
         # Store optimizer parameters
@@ -500,16 +513,16 @@ class AttentionGMM(nn.Module):
                 
                 # Backward pass
                 train_loss.backward()
-                total_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
+                total_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=10.0)
                 # print(f"Gradient Norm: {total_norm:.4f}")
                 optimizer.step_and_update_lr()
 
                 with torch.no_grad(): # to avoid data leakage during sampling
                     
                     highest_prob_pred, best_of_n_pred = self._sample_gmm_predictions(pi, sigmas, mus,target)
-                    batch_trajs,batch_weights,best_trajs,best_weights = self._run_cluster(mus,pi)
-                    print(batch_trajs.shape,batch_weights.shape)
-                    print(batch_trajs[0][0],batch_weights[0])
+                    # batch_trajs,batch_weights,best_trajs,best_weights = self._run_cluster(mus,pi)
+                    # print(batch_trajs.shape,batch_weights.shape)
+                    # print(batch_trajs[0][0],batch_weights[0])
                     
                     obs_last_pos = obs_tensor[:, -1:, 0:2]
 
@@ -544,7 +557,7 @@ class AttentionGMM(nn.Module):
             # At end of epoch
             self.tracker.compute_epoch_metrics(phase='train')
             # Test evaluation
-            if test_dl is not None:
+            if test_dl is not None and (epoch+1)%10==0:
                 self.evaluate(test_dl,from_train=True)
 
             # Print epoch metrics
@@ -560,15 +573,15 @@ class AttentionGMM(nn.Module):
                 'best_fde': self.tracker.get_averages(phase)['best_fde']
             }
             
-            should_stop, best_metrics = self.check_early_stopping(current_metrics, verbose,stop_metric='loss')
+            # should_stop, best_metrics = self.check_early_stopping(current_metrics, verbose,stop_metric='loss')
 
             # Save model if save_frequency reached 
             self._save_checkpoint(optimizer, epoch,save_model,save_frequency,save_path)
             
             # Break if early stopping triggered
-            if should_stop:
-                logger.info("Early stopping triggered. Ending training.")
-                break
+            # if should_stop:
+            #     logger.info("Early stopping triggered. Ending training.")
+            #     break
 
             # Reset metrics for next epoch
             self.tracker.reset('train')
@@ -633,6 +646,11 @@ class AttentionGMM(nn.Module):
         Args:
             ckpt_path (str): Path to checkpoint file
         """
+        if ckpt_path is None:
+            raise ValueError("Checkpoint path cannot be None")
+        
+        if not os.path.exists(ckpt_path):
+            raise FileNotFoundError(f"Checkpoint file not found at: {ckpt_path}")
         try:
             checkpoint = torch.load(ckpt_path, map_location=self.device)
             self.load_state_dict(state_dict=checkpoint['model_state_dict'])
@@ -823,7 +841,7 @@ class AttentionGMM(nn.Module):
             raise ValueError("NaN values detected in loss computation")
 
         return torch.mean(neg_log_likelihood)
-    def check_early_stopping(self, current_metrics: dict, verbose: bool = True, metric='ade') -> Tuple[bool, dict]:
+    def check_early_stopping(self, current_metrics: dict, verbose: bool = True, stop_metric='ade') -> Tuple[bool, dict]:
         """
         Check if training should stop based on the specified metric.
         
@@ -839,29 +857,29 @@ class AttentionGMM(nn.Module):
         logger = logging.getLogger('AttentionEMT')  # Changed from AttentionGMM to match your class
         
         # Only check the specified metric
-        if metric in current_metrics and metric in self.best_metrics:
-            current_value = current_metrics[metric]
+        if stop_metric in current_metrics and stop_metric in self.best_metrics:
+            current_value = current_metrics[stop_metric]
             
             # Check if the current value is better than the best value
-            if current_value < (self.best_metrics[metric] + self.config.early_stopping_delta):
-                self.best_metrics[metric] = current_value
+            if current_value < (self.best_metrics[stop_metric] + self.config.early_stopping_delta):
+                self.best_metrics[stop_metric] = current_value
                 should_stop = False
         
         # Update counter based on improvement
         if should_stop:
-            self._early_stop_counter += 1
-            if verbose and self._early_stop_counter > 0:
-                logger.info(f"\nNo improvement in {metric} for {self._early_stop_counter} epochs.")
+            self.early_stop_counter += 1
+            if verbose and self.early_stop_counter > 0:
+                logger.info(f"\nNo improvement in {stop_metric} for {self.early_stop_counter} epochs.")
         else:
-            self._early_stop_counter = 0
+            self.early_stop_counter = 0
         
         # Check if we should stop training
-        should_stop = self._early_stop_counter >= self.config.early_stopping_patience
+        should_stop = self.early_stop_counter >= self.config.early_stopping_patience
         
         # Log early stopping information if triggered
         if should_stop and verbose:
-            logger.info(f"\nEarly stopping triggered after {self._early_stop_counter} epochs without improvement in {metric}")
-            logger.info(f"Best {metric.upper()}: {self.best_metrics[metric]:.4f}")
+            logger.info(f"\nEarly stopping triggered after {self.early_stop_counter} epochs without improvement in {stop_metric}")
+            logger.info(f"Best {stop_metric.upper()}: {self.best_metrics[stop_metric]:.4f}")
         
         return should_stop, self.best_metrics.copy()
 
@@ -890,6 +908,123 @@ class AttentionGMM(nn.Module):
         fde = calculate_fde(pred_pos, target_pos.tolist())
         
         return ade, fde
+    def calculate_all_metrics(self, pred: torch.Tensor, target: torch.Tensor, obs_last_pos: torch.Tensor,
+
+                        batch_trajs: Optional[torch.Tensor] = None, 
+
+                        batch_weights: Optional[torch.Tensor] = None) -> Tuple[float, float, float, float, float, float]:
+
+        """
+
+        Calculate ADE and FDE for original prediction and both weighted & unweighted best from k trajectories
+
+        Args:
+
+            pred: predicted velocities [batch, seq_len, 2]
+
+            target: target velocities [batch, seq_len, 2]
+
+            obs_last_pos: last observed position [batch, 1, 2]
+
+            batch_trajs: optional k trajectories [batch, num_k, seq_len, 2]
+
+            batch_weights: optional weights for k trajectories [batch, num_k]
+
+        Returns:
+
+            ade: ADE for original prediction
+
+            fde: FDE for original prediction
+
+            weighted_best_ade: Best weighted ADE from k trajectories
+
+            weighted_best_fde: Best weighted FDE from k trajectories
+
+            best_k_ade: Best ADE from k trajectories (unweighted)
+
+            best_k_fde: Best FDE from k trajectories (unweighted)
+
+        """
+
+        if self.normalized:
+
+            # Denormalize all velocities
+
+            pred = pred * self.std[2:] + self.mean[2:]
+
+            target = target * self.std[2:] + self.mean[2:]
+
+            if batch_trajs is not None:
+                std = self.std[2:].cpu().numpy()
+                mean = self.mean[2:].cpu().numpy()
+                batch_trajs = batch_trajs * std + mean
+
+        
+        # Convert to absolute positions
+        pred_pos = pred.cpu().numpy().cumsum(1) + obs_last_pos.cpu().numpy()
+        target_pos = target.cpu().numpy().cumsum(1) + obs_last_pos.cpu().numpy()
+
+        
+
+        # Calculate original metrics
+        ade = calculate_ade(pred_pos, target_pos.tolist())
+        fde = calculate_fde(pred_pos, target_pos.tolist())
+
+        
+
+        if batch_trajs is not None and batch_weights is not None:
+
+            # Convert k trajectories to absolute positions [batch, num_k, seq_len, 2]
+
+            k_trajs_pos = batch_trajs.cumsum(2) + obs_last_pos.cpu().numpy()[:, None]
+
+            weights = batch_weights
+
+            
+
+            # Reshape to [batch*num_k, seq_len, 2]
+            batch_size, num_k = k_trajs_pos.shape[:2]
+            k_trajs_pos_flat = k_trajs_pos.reshape(batch_size * num_k, -1, 2)
+
+
+            # Repeat target to match k trajectories [batch*num_k, seq_len, 2]
+            target_pos_repeat = np.repeat(target_pos, num_k, axis=0)
+            
+
+            # Calculate per-sample metrics for all trajectories
+            # (Using per_sample=True returns an array of errors, one per trajectory)
+            k_ades = calculate_ade(k_trajs_pos_flat, target_pos_repeat.tolist(), per_sample=True)
+            k_fdes = calculate_fde(k_trajs_pos_flat, target_pos_repeat.tolist(), per_sample=True)
+    
+            
+
+            # Reshape back to per-batch metrics
+            k_ades = k_ades.reshape(batch_size, num_k)
+            k_fdes = k_fdes.reshape(batch_size, num_k)
+
+            
+
+            # Get weighted best (min per batch)
+            weighted_best_ade_per_sample = (k_ades * weights).min(axis=1)
+            weighted_best_fde_per_sample = (k_fdes * weights).min(axis=1)
+
+            
+            # Get unweighted best (min per batch)
+            best_k_ade_per_sample = k_ades.min(axis=1)
+            best_k_fde_per_sample = k_fdes.min(axis=1)
+            
+            # Now average these best metrics over the batch to obtain a single scalar
+            weighted_best_ade = weighted_best_ade_per_sample.mean()
+            weighted_best_fde = weighted_best_fde_per_sample.mean()
+            best_k_ade = best_k_ade_per_sample.mean()
+            best_k_fde = best_k_fde_per_sample.mean()
+
+
+            return ade, fde, best_k_ade, best_k_fde,weighted_best_ade, weighted_best_fde
+
+        
+
+        return ade, fde, ade, fde, ade, fde
     def evaluate(self, test_loader=None, ckpt_path=None, from_train=False):
         """
         Evaluate the model on test data
@@ -906,11 +1041,15 @@ class AttentionGMM(nn.Module):
         
         try:
             if not from_train:
-                self.load_model(ckpt_path)
                 # Setup logger
+               
                 logger = logging.getLogger('AttentionGMM')
                 if not logger.handlers:
-                    logger = self.setup_logger(save_path=self.log_save_path,eval=True)                                                      
+                    logger = self.setup_logger(save_path=self.log_save_path,eval=True)    
+                print("logger initialized") 
+                logger.info(f"Loading Model")  
+                self.load_model(self.checkpoint_file)
+                logger.info(f"Model Loaded!")                                              
                         
            
             # Set evaluation mode :  Need to use nn.Module's train method for mode setting
@@ -919,9 +1058,10 @@ class AttentionGMM(nn.Module):
 
             # logger.info(f"Starting evaluation on {len(test_loader)} batches")
             num_evaluated = 0
+            load_test = tqdm(test_loader)
             
             with torch.no_grad():
-                for batch in test_loader:
+                for batch in load_test:
                     obs_tensor_eval, target_tensor_eval = batch
                     
                     # dimension check
@@ -949,22 +1089,27 @@ class AttentionGMM(nn.Module):
 
                     # highest_prob_pred and best of n prediction
                     highest_prob_pred, best_of_n_pred = self._sample_gmm_predictions(pi_eval, sigmas_eval, mus_eval,target_eval)
+                    batch_trajs,batch_weights,best_trajs,best_weights = self._run_cluster(mus_eval,pi_eval,pred_len=dec_seq_len) 
                     
                     
                     # Calculate metrics
                     eval_loss = self._mdn_loss_fn(pi_eval, sigma_x_eval,sigma_y_eval, mu_x_eval , mu_y_eval,target_eval,self.num_gaussians)
                     eval_obs_last_pos = obs_tensor_eval[:, -1:, 0:2]
 
-                    eval_ade, eval_fde = self.calculate_metrics(highest_prob_pred, target_eval, eval_obs_last_pos)
+                    
 
-                    eval_ade_best_n, eval_fde_best_n = self.calculate_metrics(best_of_n_pred, target_eval, eval_obs_last_pos)
+                    # eval_ade, eval_fde = self.calculate_metrics(highest_prob_pred, target_eval, eval_obs_last_pos)
+                    eval_ade, eval_fde, best_k_ade, best_k_fde,_,_ = self.calculate_all_metrics(highest_prob_pred, target_eval,eval_obs_last_pos,batch_trajs,batch_weights)
+
+                    # print(f"eval_ade {eval_ade:.4f} eval_fde {eval_fde:.4f} best_k_ade {best_k_ade:.4f} best_k_fde {best_k_fde:.4f}")
+                    # eval_ade_best_n, eval_fde_best_n = self.calculate_metrics(best_of_n_pred, target_eval, eval_obs_last_pos)
                     
                     batch_metrics = {
                                 'loss': eval_loss.item(),
                                 'ade': eval_ade,
                                 'fde': eval_fde,
-                                'best_ade': eval_ade_best_n,
-                                'best_fde': eval_fde_best_n
+                                'best_ade': best_k_ade,
+                                'best_fde': best_k_fde
                             }
                     num_evaluated += obs_tensor_eval.shape[0]
                     self.tracker.update(batch_metrics, obs_tensor_eval.shape[0], phase='test')
@@ -983,15 +1128,31 @@ class AttentionGMM(nn.Module):
         finally:
             # Restore original training mode
             super().train(training)
-    def _run_cluster(self,mus, pi, threshold=0.05, pred_len=10):
+    def _run_cluster(self,mus, pi, threshold=0.01, pred_len=10):
+        """
+        Process trajectories from input data.
+
+        Parameters:
+            mue: The input trajectory data.
+            pi: The weights for the trajectories.
+            threshold: Threshold value for selecting valid centroids.
+            pred_len: The length of the prediction.
+
+        Returns:
+            trajs (numpy.ndarray): The full list of trajectories with shape (batch_size,trajs, traj_len, 2).
+            best_trajs (numpy.ndarray): The best trajectories selected based on weights with shape (batch_size, traj_len, 2).
+            weights (numpy.ndarray): The weights for each trajectory.
+            best_weights (numpy.ndarray): The weights for the best trajectories.
+        """
         data_weight = pi.detach().cpu().numpy()
+        mue = mus.detach().cpu().numpy()
         
         trajs, best_trajs, weights, best_weights = [], [], [], []
 
-        for batch, pis in zip(mus, data_weight):
+        for mue_batch, pis in zip(mue, data_weight):
             root = TreeNode([0, 0], 0, 0)
             
-            for level, (timestamp, pie) in enumerate(zip(batch, pis), start=1):
+            for level, (timestamp, pie) in enumerate(zip(mue_batch, pis), start=1):
                 centroids = timestamp[pie > threshold]
                 pied = pie[pie > threshold].reshape(-1, 1)
                 
@@ -1000,15 +1161,16 @@ class AttentionGMM(nn.Module):
                     root.add_child(TreeNode(centroid, pied[i], i == max_index, level), level - 1)
                     
                 if level == pred_len:
-                    pos_trajs, pos_weights = root.get_trajectories(pred_len)
+                    # pos_trajs, pos_weights = root.get_trajectories(pred_len)
+                    pos_trajs, pos_weights = root.get_exact_k_trajectories(self.best_of_k,pred_len)
                     normalized_weights = np.round(pos_weights / np.sum(pos_weights), 1)
                     
                     trajs.append(pos_trajs)
                     weights.append(normalized_weights)
                     best_idx = np.argmax(normalized_weights)
                     
-                    best_trajs.append(pos_trajs[best_idx])
-                    best_weights.append(normalized_weights[best_idx])
+                    best_trajs.append(np.array(pos_trajs[best_idx]))
+                    best_weights.append(np.array(normalized_weights[best_idx]))
         return np.array(trajs),np.array(weights), best_trajs, best_weights
     
     def _generate_square_mask(
@@ -1338,102 +1500,110 @@ class MetricTracker:
 
 
 class TreeNode:
-    def __init__(self, value, weight, maximum,level=0):
+    def __init__(self, value: List[float], weight: float, maximum: bool, level: int = 0):
         self.value = value
         self.weight = weight
         self.children = []
         self.level = level
-        self.is_max = maximum # means it is the max value
+        self.is_max = maximum
         self.max_connected = False
 
 
-    def add_child(self, child, prev_level):
+    def add_child(self, child, prev_level, multi_connection=False):
+        """
+        Add a child node to the tree structure.
+        
+        Parameters:
+            child: The node to be added
+            prev_level: Target level to connect to
+            multi_connection: If True and child is max, it will be connected to both 
+                            the closest node and any max probability nodes
+        """
+        # Direct connection if at the target level
         if self.level == prev_level:
             self.children.append(child)
             return
 
-        min_distance, closest_node = math.inf, None
-        not_connected = True
+        # Initialize tracking variables
+        min_distance = math.inf
+        closest_node = None
+        max_connected = False  # Flag to track if connected to a max node
         stack = [self]
 
+        # Depth-first search through the tree
         while stack:
             node = stack.pop()
             if node.level == prev_level:
+                # Find and track closest node by distance
                 distance = math.dist(node.value, child.value)
                 if distance < min_distance:
-                    min_distance, closest_node = distance, node
+                    min_distance = distance
+                    closest_node = node
 
+                # Connect max nodes (special priority connection)
                 if node.is_max and child.is_max:
-                    closest_node.children.append(child)
-                    not_connected = False
-                    closest_node.max_connected = True
-
+                    node.children.append(child)
+                    max_connected = True
+                    node.max_connected = True
+            
+            # Add children to stack to continue traversal
             elif node.children:
                 stack.extend(node.children)
 
-        if not_connected and closest_node:
+        # Connect to closest node if:
+        # 1. Not already connected to a max node, OR
+        # 2. Multi-connection is enabled and closest node isn't already max-connected
+        if not max_connected or (multi_connection and not closest_node.max_connected):
             closest_node.children.append(child)
 
+    def get_exact_k_trajectories(self, k: int = 5, depth: int = 10):
+        """
+        Get exactly k trajectories based on weights, repeating top trajectories if needed
+        Args:
+            k: number of trajectories to return
+            depth: trajectory depth required for valid branches
+        Returns:
+            trajectories: np.array of shape [k, depth, 2]
+            weights: np.array of shape [k]
+        """
+        branches, weights = self.get_all_branches()
+        
+        # Filter for full branches
+        # Filter valid branches (those with at least `depth` waypoints)
+        valid_indices = [i for i, branch in enumerate(branches) if len(branch) >= depth]
+        branches = np.array([branches[i][:depth] for i in valid_indices])
+        weights  =  np.array([weights[i] for i in valid_indices]).flatten()
+        
+        # Sort all by weights in descending order
+        sorted_indices = np.argsort(-weights)
+        sorted_branches = branches[sorted_indices]
+        sorted_weights = weights[sorted_indices]
 
-    # def add_child(self, child, prev_level):
-    #     if self.level == prev_level:
-    #         self.children.append(child)
-            
-    #     else:
-    #         min_distance = math.inf
-    #         closest_node = None
-    #         not_connected = True
-    #         stack = [self]
-    #         #print("For node : ",child.value," at level ",child.level)
-    #         while stack:
-    #             node = stack.pop()
-    #             if node.level==prev_level:
-    #                 # print("node at level ",node.level, " does not have children")
-    #                 distance = math.sqrt((node.value[0] - child.value[0]) ** 2 + (node.value[1] - child.value[1]) ** 2)
-    #                 if distance < min_distance:
-    #                     min_distance = distance
-    #                     closest_node = node
-    #                     #print("For node : ",child.value," at level ",child.level," Node: ",closest_node.value," at level ",closest_node.level)
-    #                 # Check if both are max
-    #                 if (node.is_max and child.is_max):
-    #                     closest_node.children.append(child)
-    #                     not_connected = False
-    #                     closest_node.max_connected = True
+        # Repeat trajectories if we have fewer than k
+        if len(weights) < k:
+            repeat_times = k // len(weights) + 1
+            sorted_branches = np.tile(sorted_branches, (repeat_times, 1, 1))
+            sorted_weights = np.tile(sorted_weights, repeat_times)
 
-    #             elif(node.children):
-    #                 # print("node at level ",node.level, "has children")
-    #                 for node_child in node.children:
-    #                     stack.append(node_child)
-                
-    #         if(not_connected):   # connect if its not max
-    #             closest_node.children.append(child)
-    #         # closest_node.children.append(child)
-
+        # Return exactly k trajectories
+        return sorted_branches[:k], sorted_weights[:k]
     
-    def get_trajectories(self,depth = 12,full=True):
-        # branches = self.get_all_branches()
+    def get_trajectories(self,depth = 10,full=True):
         branches,weights = self.get_all_branches()
-        # full_branches = [branch for branch in branches if len(branch[0]) >= depth]
-        full_branches = [branch for branch in branches if len(branch) >= depth]
+        full_branches = [np.array(branch) for branch in branches if len(branch) >= depth]
         full_weights = [weights[i] for i in range(len(weights)) if len(branches[i]) >= depth]
         return full_branches,full_weights
-           
-
+        
     def get_all_branches(self):
+        """Recursively finds all branches of the tree."""
         if not self.children:
-            # return [[[self.value.tolist()],self.weight]]
-            return [[self.value.tolist()]],self.weight
+            return [[self.value]], [self.weight]
         branches = []
         weights = []
-        full_branches = []
-        full_weights = []
-
         for child in self.children:
-                
-                brncs, wgts = child.get_all_branches()
-                for branch,weight in zip(brncs, wgts) :
+                child_branches, child_weights = child.get_all_branches()
+                for branch, weight in zip(child_branches, child_weights):
                     if self.level == 0:
-                        # branches.append([branch, weight])  
                         branches.append(branch) 
                         weights.append(weight) 
                     else:

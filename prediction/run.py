@@ -36,7 +36,7 @@ import torch.nn as nn
 
 gnn_predictors = set(["gcn", "gat", "gcn_lstm", "gat_lstm"])
 
-def create_predictor(past_trajectory, future_trajectory, max_nodes, predictor, device, normalize, checkpoint_file):
+def create_predictor(past_trajectory, future_trajectory, max_nodes, predictor, device, normalize, checkpoint_file, win_size):
     """
     Initializes and returns the appropriate predictor model based on the specified type.
     
@@ -72,6 +72,9 @@ def create_predictor(past_trajectory, future_trajectory, max_nodes, predictor, d
                             future_trajectory=future_trajectory, 
                             device=device, 
                             normalize=normalize)
+    #return AttentionEMT(past_trajectory=past_trajectory, future_trajectory=future_trajectory, device=device, normalize=normalize, checkpoint_file=checkpoint_file,win_size=win_size)
+    #elif predictor == 'transformer-gmm':
+    #return AttentionGMM(past_trajectory=past_trajectory, future_trajectory=future_trajectory, device=device, normalize=normalize, checkpoint_file=checkpoint_file,win_size=win_size)
     else:
         return RNNPredictor(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
         
@@ -101,7 +104,7 @@ if __name__ == '__main__':
     p.add_argument('future_trajectory', type=int, help='Prediction Horizon')
     p.add_argument('--window_size', default=1, type=int, help='Sliding window')
     p.add_argument('--max_nodes', type=int, default=50, help='Maximum number of nodes for GNN model')
-    p.add_argument('--predictor', type=str, default='transformer', choices=['lstm', 'gcn', 'gcn_lstm', 'gat', 'gat_lstm', 'transformer','transformer-gmm'], help='Predictor type')
+    p.add_argument('--predictor', type=str, default='transformer-gmm', choices=['lstm', 'gcn', 'gcn_lstm', 'gat', 'gat_lstm', 'transformer','transformer-gmm'], help='Predictor type')
     p.add_argument('--setting', type=str, default='train',choices=['train', 'evaluate'], help='Execution mode (train or evaluate)')
     p.add_argument('--checkpoint', type=str, default=None, help='Path to model checkpoint file, required if mode is evaluate')
     p.add_argument('--annotations_path', type=str, help='If annotations are placed in a location different from recommended')
@@ -140,7 +143,10 @@ if __name__ == '__main__':
                                  args.predictor, 
                                  args.device,
                                  args.normalize,
-                                 args.checkpoint)
-
-    predictor.train(train_loader, saving_checkpoint_path="checkpoints") 
-    predictor.evaluate(test_loader)
+                                 args.checkpoint,
+                                 args.window_size)
+    if args.setting=='train':
+        predictor.train(train_loader,test_loader,saving_checkpoint_path='checkpoints/transformer-gmm.pth') 
+    elif args.setting=='evaluate':
+        assert args.checkpoint is not None, "Checkpoint file is required for evaluation"
+        predictor.evaluate(test_loader)
