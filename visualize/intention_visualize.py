@@ -191,6 +191,6 @@ if __name__ == '__main__':
         if args.checkpoint is None:
             print("To run evaluation, please provide a checkpoint file.")
             exit()
-        # change to autoregressive if needed
+        # change to autoregressive if needed (replace to RNNAutoregressivePredictor)
         predictor = RNNVanillaPredictor(args.past_trajectory, args.future_trajectory, args.device, checkpoint_file=args.checkpoint) 
         plot_predicted_intentions(args.video_path, intentions, predictor)
