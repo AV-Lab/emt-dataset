@@ -11,7 +11,7 @@
 - [Features](#features)
 - [Quick Start](#quick-start)
 - [Dataset Structure](#dataset-structure)
-- [Repository Structure](#repo-structure)
+- [Repository Structure](#repository-structure)
 - [Benchmarking](#benchmarking)
 - [Links](#links)
 - [Contact](#contact)
@@ -113,6 +113,7 @@ emt-dataset/
 ├── intention/    # Intention prediction scripts
 ├── prediction/    # Trajectory prediction scripts
 ├── tracking/    # Tracking scripts
+├── visualize/    # All visualization scripts, for tracking, prediction and intention
 ├── constants.py    # Contains all constants utilized in repo, including labels for intention classes
 ├── dataset_statistics.py    # Script for printing statistics reported in the paper
 ├── utils.py    # Contains scripts for generating intention, prediction sttings including k-fold cross validation setting, as well as frames extraction related fuinctions 
@@ -158,7 +159,7 @@ Prediction package runs trajectory prediction models using LSTM, Graph Neural Ne
 |   └── run.py
 ```
 
-Switch to prediction folder (cd prediction) and follow the details for running trajectory prediction models [here](predciction/README.md)
+Switch to prediction folder (cd prediction) and follow the details for running trajectory prediction models [here](prediction/README.md)
 
 ### Intention Prediction
 Intention package runs LSTM-based prediction model in autoregressive and vanilla settings. It supports training and evaluation modes, allowing users to load pre-trained models.
