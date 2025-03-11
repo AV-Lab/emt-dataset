@@ -282,7 +282,7 @@ class GATPredictor:
         torch.save(ckpt, f"{folder}/gat_trained_model.pth")
         print(f"Checkpoint saved to {folder}/gat_lstm_trained_model.pth")
 
-    def train(self, train_loader, valid_loader=None, saving_checkpoint_path=None):
+    def train(self, train_loader, valid_loader=None, save_path=None):
         """
         Train the GAT predictor using the flattened past trajectory.
         """
@@ -363,28 +363,29 @@ class GATPredictor:
                     'ADE': f"{ade_batch:.4f}",
                     'FDE': f"{fde_batch:.4f}"
                 })
-
-                if valid_loader is not None:
-                    val_loss = self.validate(valid_loader)
-                    if val_loss < self.best_val_loss:
-                        self.best_val_loss = val_loss
-                        self.epochs_without_improvement = 0
-                        if saving_checkpoint_path is not None:
-                            self.save_checkpoint(saving_checkpoint_path)
-                    else:
-                        self.epochs_without_improvement += 1
-                    if self.epochs_without_improvement >= self.patience:
-                        print("Early stopping triggered.")
-                        break
-
+            
             avg_epoch_loss = epoch_loss / len(train_loader)
             avg_epoch_ade = epoch_ade / len(train_loader)
             avg_epoch_fde = epoch_fde / len(train_loader)
             print(f"\nEpoch {epoch+1}/{self.num_epochs}")
             print(f"Train - Loss: {avg_epoch_loss:.4f}, ADE: {avg_epoch_ade:.4f}, FDE: {avg_epoch_fde:.4f}")
+            
+            if valid_loader is not None:
+                val_loss = self.validate(valid_loader)
+                if val_loss < self.best_val_loss:
+                    self.best_val_loss = val_loss
+                    self.epochs_without_improvement = 0
+                    if save_path is not None:
+                        self.save_checkpoint(save_path)
+                else:
+                    self.epochs_without_improvement += 1
+                if self.epochs_without_improvement >= self.patience:
+                    print("Early stopping triggered.")
+                    break
 
-        if saving_checkpoint_path is not None and valid_loader is None:
-            self.save_checkpoint(saving_checkpoint_path)
+
+        if save_path is not None and valid_loader is None:
+            self.save_checkpoint(save_path)
 
     def validate(self, valid_loader):
         """

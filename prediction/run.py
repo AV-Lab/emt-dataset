@@ -60,18 +60,20 @@ def create_predictor(past_trajectory, future_trajectory, max_nodes, predictor, d
         return GATPredictor(past_trajectory, future_trajectory, device, max_nodes, normalize, checkpoint_file) 
     elif predictor == "gat_lstm":
         return GATLSTMPredictor(past_trajectory, future_trajectory, device, max_nodes, normalize, checkpoint_file) 
-    elif predictor == 'transformer':
+    elif predictor == "transformer":
         return AttentionEMT(checkpoint_file=checkpoint_file,
                             past_trajectory=past_trajectory, 
                             future_trajectory=future_trajectory, 
                             device=device, 
-                            normalize=normalize)
-    elif predictor == 'transformer-gmm':
+                            normalize=normalize,
+                            win_size=win_size)
+    elif predictor == "transformer-gmm":
         return AttentionGMM(checkpoint_file=checkpoint_file,
                             past_trajectory=past_trajectory, 
                             future_trajectory=future_trajectory, 
                             device=device, 
-                            normalize=normalize)
+                            normalize=normalize,
+                            win_size=win_size)
     else:
         return RNNPredictor(past_trajectory, future_trajectory, device, normalize, checkpoint_file)
         
@@ -143,7 +145,8 @@ if __name__ == '__main__':
                                  args.checkpoint,
                                  args.window_size)
     if args.setting=='train':
-        predictor.train(train_loader,test_loader,saving_checkpoint_path='checkpoints/transformer-gmm.pth') 
+        predictor.train(train_loader, save_path="checkpoints") 
+        predictor.evaluate(test_loader)
     elif args.setting=='evaluate':
         assert args.checkpoint is not None, "Checkpoint file is required for evaluation"
         predictor.evaluate(test_loader)

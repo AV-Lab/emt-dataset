@@ -141,7 +141,7 @@ Prediction package runs trajectory prediction models using LSTM, Graph Neural Ne
 |   └── run.py
 ```
 
-The details for running trajectory prediction models are [here]()
+Switch to prediction folder (cd prediction) and follow the details for running trajectory prediction models [here]("predciction/README.md")
 
 ### Intention Prediction
 Intention package runs LSTM-based prediction model in autoregressive and vanilla settings. It supports training and evaluation modes, allowing users to load pre-trained models.

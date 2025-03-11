@@ -647,9 +647,14 @@ class AttentionEMT(nn.Module):
                 obs_tensor = obs_tensor.to(self.device)
                 target_tensor = target_tensor.to(self.device)
 
-                input_train = (obs_tensor[:,1:,2:4] - self.mean[2:])/self.std[2:]
+                if self.normalized:
+                    input_train = (obs_tensor[:,1:,2:4] - self.mean[2:])/self.std[2:]
+                    target = ((target_tensor[:, :, 2:4] - self.mean[2:]) / self.std[2:]).clone()
+                else:
+                    input_train = obs_tensor[:,1:,2:4]
+                    target = (target_tensor[:, :, 2:4]).clone()
                 updated_enq_length = input_train.shape[1]
-                target = ((target_tensor[:, :, 2:4] - self.mean[2:]) / self.std[2:]).clone()
+               
 
                 # Prepare target input (teacher forcing)
                 tgt = torch.zeros_like(target).to(self.device)
@@ -702,7 +707,7 @@ class AttentionEMT(nn.Module):
             self.tracker.compute_epoch_metrics(phase='train')
             
             # Test evaluation
-            if test_dl is not None and (epoch+1)%80 ==0:
+            if test_dl is not None:
                 self.evaluate(test_dl,from_train=True)
 
             # Print epoch metrics
@@ -791,9 +796,13 @@ class AttentionEMT(nn.Module):
                     target_tensor_eval = target_tensor_eval.to(self.device)
                     dec_seq_len = target_tensor_eval.shape[1]
 
-                    input_eval = (obs_tensor_eval[:,1:,2:4] - self.mean[2:])/self.std[2:]
+                    if self.normalized:
+                        input_eval = (obs_tensor_eval[:,1:,2:4] - self.mean[2:])/self.std[2:]
+                        target_eval = ((target_tensor_eval[:, :, 2:4] - self.mean[2:]) / self.std[2:]).clone()
+                    else:
+                        input_eval = obs_tensor_eval[:,1:,2:4] 
+                        target_eval = (target_tensor_eval[:, :, 2:4]).clone()
                     updated_enq_length = input_eval.shape[1]
-                    target_eval = ((target_tensor_eval[:, :, 2:4] - self.mean[2:]) / self.std[2:]).clone()
 
 
                     # Initialize first decoder input as zeros
@@ -823,6 +832,10 @@ class AttentionEMT(nn.Module):
                     self.tracker.update(eval_batch_metrics, obs_tensor_eval.shape[0], phase='test')
                     
             self.tracker.compute_epoch_metrics(phase='test')
+            
+          
+            
+            
             # Print epoch metrics
             if not from_train:
                 self.tracker.print_epoch_metrics(epoch=0, epochs=1, verbose=True)
