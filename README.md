@@ -12,6 +12,7 @@
 - [Quick Start](#quick-start)
 - [Dataset Structure](#dataset-structure)
 - [Repository Structure](#repo-structure)
+- [Benchmarking](#benchmarking)
 - [Links](#links)
 - [Contact](#contact)
 
@@ -89,12 +90,7 @@ chmod +x download.sh
 # Statistics
 python dataset_statistics.py
 ```
-3. To visualize detection data run the following command:
-```bash
-# visualize
-cd visualize
-python tracking_visualize.py
-```
+
 ## Dataset Structure
 To use base models, the dataset structure should be as follows:
 ```
@@ -109,6 +105,27 @@ emt-dataset/
 │   └── videos/                      # Raw video sequences
 ```
 NB: Videos are not necessary unless you intend to use visual cues 
+
+## Repository Structure
+```
+emt-dataset/
+├── data/    # Containts dataset files and annotations
+├── intention/    # Intention prediction scripts
+├── prediction/    # Trajectory prediction scripts
+├── tracking/    # Tracking scripts
+├── constants.py    # Contains all constants utilized in repo, including labels for intention classes
+├── dataset_statistics.py    # Script for printing statistics reported in the paper
+├── utils.py    # Contains scripts for generating intention, prediction sttings including k-fold cross validation setting, as well as frames extraction related fuinctions 
+```
+
+## Visualization
+
+3. To visualize detection data run the following command:
+```bash
+# visualize
+cd visualize
+python tracking_visualize.py
+```
 
 ## Benchmarking
 We benchmark the dataset for the following tasks:
@@ -141,7 +158,7 @@ Prediction package runs trajectory prediction models using LSTM, Graph Neural Ne
 |   └── run.py
 ```
 
-Switch to prediction folder (cd prediction) and follow the details for running trajectory prediction models [here]("predciction/README.md")
+Switch to prediction folder (cd prediction) and follow the details for running trajectory prediction models [here](predciction/README.md)
 
 ### Intention Prediction
 Intention package runs LSTM-based prediction model in autoregressive and vanilla settings. It supports training and evaluation modes, allowing users to load pre-trained models.
@@ -159,7 +176,7 @@ Intention package runs LSTM-based prediction model in autoregressive and vanilla
 |   └── run.py
 ```
 
-The details for running intention prediction models are [here]()
+Switch to intention folder (cd intention) and follow the details for running intention prediction models [here](intention/README.md)
 
 #### Installation Requirements
 Install dependencies using:
