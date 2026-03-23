@@ -1,11 +1,5 @@
 # EMT Dataset
 
-<p align="center">
-    <img src="assets/Multi_object_tracking_with _ground-truth.gif" width="1200px"/>
-    <br>
-    <i>Multi-object tracking with ground truth annotations</i>
-</p>
-
 ## Table of Contents
 - [Introduction](#introduction)
 - [Features](#features)
@@ -85,12 +79,6 @@ chmod +x download.sh
 ./download.sh
 ```
 
-2. To confirm data stats run the following command:
-```bash
-# Statistics
-python dataset_statistics.py
-```
-
 ## Dataset Structure
 To use base models, the dataset structure should be as follows:
 ```
@@ -102,9 +90,22 @@ emt-dataset/
 │   │   ├── prediction_annotations/   # Behavior prediction labels
 │   │   └── metadata.txt             # Dataset metadata
 │   │── frames/                      # extracted frames(annotated frames only)
-│   └── videos/                      # Raw video sequences
 ```
-NB: Videos are not necessary unless you intend to use visual cues 
+
+2. To confirm data stats run the following command:
+```bash
+# Statistics
+python dataset_statistics.py
+```
+
+## Visualize dataset
+
+For exploring and visualizing ground truth annotations per video, the following commands can be run with specifying the mode depending on what you want to visaluze: choices=dets, preds, intentions, tracks.
+```bash
+python visualize.py --dataset_path path_to_data_folder --video_name video_1
+python visualize.py --dataset_path path_to_data_folder --video_name video_1 --mode tracks
+```
+
 
 ## Repository Structure
 ```
@@ -191,6 +192,13 @@ pip install -r requirements.txt
 - Normalization is recommended for better model performance.
 
 
+### Generating annotations 
+```bash
+python -m benchmarks.detection_annotations --dataset_dir path_to_raw_annotations_data_folder
+python -m benchmarks.tracking_annotations --dataset_dir path_to_raw_annotations_data_folder
+python -m benchmarks.prediction_annotations --dataset_dir path_to_raw_annotations_data_folder
+python -m benchmarks.intention_annotations --dataset_dir path_to_raw_annotations_data_folder
+```
 
 ## 🔗 Links
 - Repository: [GitHub - AV-Lab/emt-dataset](https://github.com/AV-Lab/emt-dataset)
