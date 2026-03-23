@@ -203,6 +203,7 @@ python -m benchmarks.intention_annotations --dataset_dir path_to_raw_annotations
 ## 🔗 Links
 - Repository: [GitHub - AV-Lab/emt-dataset](https://github.com/AV-Lab/emt-dataset)
 - Website: [EMT Dataset](https://avlab.io/emt-dataset/)
+- HuggingFace: [EMT_Dataset](https://huggingface.co/datasets/KuAvLab/EMT/)
 
 ## 📝 Citation
 If you use the EMT dataset in your research, please cite our paper:
